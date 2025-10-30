@@ -222,7 +222,17 @@ export default function HumanLibraryPie() {
                     overflow: "hidden"
                   }}
                 >
-                  <h2 style={{ margin: 0, fontSize: 28, fontWeight: 700, paddingTop: expanded ? "30px" : "0px" }}>{s.label}</h2>
+                  <h2 style={{ 
+                    margin: 0, 
+                    fontSize: 28, 
+                    fontWeight: 700, 
+                    paddingTop: expanded ? "30px" : "0px",
+                    width: isActive && expanded ? 420 : isActive ? 300 : 500,
+                    textAlign: "center",
+                    hyphens: "auto",
+                    wordBreak: "break-word" 
+                  }}>{s.label}</h2>
+
                   <div style={{
                     width: 60,
                     height: 4,
