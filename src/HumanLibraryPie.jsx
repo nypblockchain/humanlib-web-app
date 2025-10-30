@@ -1,24 +1,36 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { initializeApp } from 'firebase/app';
+import { getFirestore, collection, onSnapshot } from 'firebase/firestore';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDiYNFFyKmjhViYMo9YPPcZGSuNTqX2Ido",
+  authDomain: "humanlib-e647f.firebaseapp.com",
+  projectId: "humanlib-e647f",
+  storageBucket: "humanlib-e647f.firebasestorage.app",
+  messagingSenderId: "207013774871",
+  appId: "1:207013774871:web:6a3e2524b6d7e0e4677e52",
+  measurementId: "G-XN1WM6QKVX"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
 
 export default function HumanLibraryPie() {
   const [active, setActive] = useState(null);
   const [expanded, setExpanded] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState(null);
-  const [showStudent, setShowStudent] = useState(false);
+  const [studentsData, setStudentsData] = useState([]);
 
-  const slices = [
+  const baseSlices = [
     { 
       id: "text", 
-      label: "Text", 
+      label: "The Inside Scoop", 
       img: "/img/text.png", 
-      color: "#FF6B6B", 
+      color: "#ffffff27", 
       angle: 0, 
       distance: 0,
-      description: "Explore various text-based resources and materials.",
-      students: [
-        
-      ]
+      description: "Made by Jingda TEEHEE"
     },
     { 
       id: "internships", 
@@ -27,10 +39,7 @@ export default function HumanLibraryPie() {
       color: "#EF4444", 
       angle: -90, 
       distance: 300,
-      description: "Discover internship opportunities and gain hands-on experience in your field.",
-      students: [
-        
-      ]
+      description: "Discover internship opportunities and gain hands-on experience in your field."
     },
     { 
       id: "overseas", 
@@ -39,10 +48,7 @@ export default function HumanLibraryPie() {
       color: "#22C55E", 
       angle: -90 + 72, 
       distance: 300,
-      description: "Study abroad programs and international exchange opportunities.",
-      students: [
-        
-      ]
+      description: "Study abroad programs and international exchange opportunities."
     },
     { 
       id: "professional", 
@@ -51,10 +57,7 @@ export default function HumanLibraryPie() {
       color: "#BFBFBF", 
       angle: -90 - 72, 
       distance: 300,
-      description: "Develop your professional skills through workshops and mentorship programs.",
-      students: [
-      
-      ]
+      description: "Develop your professional skills through workshops and mentorship programs."
     },
     { 
       id: "alumni", 
@@ -63,10 +66,7 @@ export default function HumanLibraryPie() {
       color: "#FAE316", 
       angle: 126, 
       distance: 300,
-      description: "Connect with alumni and learn about career paths after graduation.",
-      students: [
-        { name: "Bobby hehhe", avatar: "https://media.licdn.com/dms/image/v2/C4D03AQFZZRy-03STfw/profile-displayphoto-shrink_400_400/profile-displayphoto-shrink_400_400/0/1516480189625?e=1763596800&v=beta&t=jObgu3JiJbTY_GVM6stQXzEx1YQ2dT21g4_6bQi4sSs", roles: ["4 year experience", "Outreach", "Blockchain SIG advisor", "SEN advisor"] },
-      ]
+      description: "Connect with alumni and learn about career paths after graduation."
     },
     { 
       id: "courses", 
@@ -75,12 +75,62 @@ export default function HumanLibraryPie() {
       color: "#3B82F6", 
       angle: 54, 
       distance: 230,
-      description: "Explore specialized courses and learning pathways to enhance your skills.",
-      students: [
-        
-      ]
+      description: "The School of Information Technology (IT) at Nanyang Polytechnic (NYP) offers a wide range of cutting-edge courses designed to equip students with the essential skills and knowledge to thrive in the fast-evolving digital world."
     }
   ];
+
+  // Real-time listener for students from Firebase
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, 'students'), (snapshot) => {
+      const students = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setStudentsData(students);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Build slices with students from Firebase
+  const slices = baseSlices.map(slice => {
+    const categoryStudents = studentsData
+      .filter(student => student.category === slice.id)
+      .map(student => ({
+        name: student.name,
+        avatar: student.avatar,
+        course: student.course,
+        year: student.year,
+        achievements: student.achievements || [],
+        shifts: student.shifts || []
+      }));
+
+    return {
+      ...slice,
+      students: categoryStudents
+    };
+  });
+
+  // Check if student is available for any of their shifts
+  const isStudentAvailable = (student) => {
+    if (!student.shifts || student.shifts.length === 0) return true;
+    
+    const now = new Date();
+    
+    // Check if any shift is currently active
+    return student.shifts.some(shift => {
+      if (!shift.date || !shift.shiftStart || !shift.shiftEnd) return false;
+      
+      const [day, month, year] = shift.date.split('/');
+      const [startHour, startMin] = shift.shiftStart.split(':');
+      const [endHour, endMin] = shift.shiftEnd.split(':');
+      
+      const shiftStart = new Date(year, month - 1, day, startHour, startMin);
+      const shiftEnd = new Date(year, month - 1, day, endHour, endMin);
+      
+      return now >= shiftStart && now <= shiftEnd;
+    });
+  };
 
   useEffect(() => {
     const handleKeyPress = (e) => {
@@ -107,7 +157,10 @@ export default function HumanLibraryPie() {
   useEffect(() => {
     if (active) {
       const activeSliceData = slices.find(s => s.id === active);
-      const randomStudent = activeSliceData.students[Math.floor(Math.random() * activeSliceData.students.length)];
+      const availableStudents = activeSliceData.students.filter(isStudentAvailable);
+      const randomStudent = availableStudents.length > 0 
+        ? availableStudents[Math.floor(Math.random() * availableStudents.length)]
+        : null;
       setSelectedStudent(randomStudent);
       
       const expandTimer = setTimeout(() => {
@@ -293,7 +346,6 @@ export default function HumanLibraryPie() {
         })}
       </div>
 
-      {/* Expanded Students Panel - Right of expanded popup */}
       <AnimatePresence>
         {expanded && selectedStudent && activeSlice && (
           <motion.div
@@ -314,7 +366,7 @@ export default function HumanLibraryPie() {
             style={{
               position: "absolute",
               left: "50%",
-              top: "50%",
+              top: "44%",
               transform: "translate(-50%, -50%)",
               width: 320,
               padding: 0,
@@ -372,27 +424,75 @@ export default function HumanLibraryPie() {
                   width: "100%",
                   display: "flex",
                   flexDirection: "column",
-                  gap: "10px"
+                  gap: "12px"
                 }}
               >
-                {selectedStudent.roles.map((role, idx) => (
+                <motion.div
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.8 }}
+                  style={{
+                    background: `${activeSlice.color}15`,
+                    padding: "12px 16px",
+                    borderRadius: "10px",
+                    border: `1px solid ${activeSlice.color}40`
+                  }}
+                >
+                  <div style={{ fontSize: 12, color: "#666", fontWeight: 600, marginBottom: "4px" }}>COURSE</div>
+                  <div style={{ fontSize: 14, color: "#2c3e50", fontWeight: 500 }}>{selectedStudent.course}</div>
+                </motion.div>
+
+                <motion.div
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.85 }}
+                  style={{
+                    background: `${activeSlice.color}15`,
+                    padding: "12px 16px",
+                    borderRadius: "10px",
+                    border: `1px solid ${activeSlice.color}40`
+                  }}
+                >
+                  <div style={{ fontSize: 12, color: "#666", fontWeight: 600, marginBottom: "4px" }}>YEAR</div>
+                  <div style={{ fontSize: 14, color: "#2c3e50", fontWeight: 500 }}>{selectedStudent.year}</div>
+                </motion.div>
+
+                {selectedStudent.achievements && selectedStudent.achievements.length > 0 && (
                   <motion.div
-                    key={idx}
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.8 + (idx * 0.1) }}
+                    transition={{ delay: 0.9 }}
                     style={{
-                      fontSize: 14,
-                      color: "#2c3e50",
-                      padding: "10px 0",
-                      borderBottom: idx < selectedStudent.roles.length - 1 ? `1px solid ${activeSlice.color}30` : "none",
-                      textAlign: "center",
-                      fontWeight: 500
+                      background: `${activeSlice.color}15`,
+                      padding: "12px 16px",
+                      borderRadius: "10px",
+                      border: `1px solid ${activeSlice.color}40`
                     }}
                   >
-                    {role}
+                    <div style={{ fontSize: 12, color: "#666", fontWeight: 600, marginBottom: "8px" }}>ACHIEVEMENTS</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                      {selectedStudent.achievements.map((achievement, idx) => (
+                        <div 
+                          key={idx}
+                          style={{ 
+                            fontSize: 13, 
+                            color: "#2c3e50",
+                            paddingLeft: "12px",
+                            position: "relative"
+                          }}
+                        >
+                          <span style={{ 
+                            position: "absolute", 
+                            left: 0, 
+                            color: activeSlice.color,
+                            fontWeight: 700 
+                          }}>•</span>
+                          {achievement}
+                        </div>
+                      ))}
+                    </div>
                   </motion.div>
-                ))}
+                )}
               </motion.div>
             </div>
           </motion.div>
