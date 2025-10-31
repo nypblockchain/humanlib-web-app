@@ -38,7 +38,7 @@ export default function HumanLibraryPie() {
       img: "/img/internships.png", 
       color: "#EF4444", 
       angle: -90, 
-      distance: 300,
+      distance: 250,
       description: "Discover internship opportunities and gain hands-on experience in your field."
     },
     { 
