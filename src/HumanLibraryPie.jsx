@@ -74,7 +74,7 @@ export default function HumanLibraryPie() {
       img: "/img/courses.png", 
       color: "#3B82F6", 
       angle: 54, 
-      distance: 230,
+      distance: 300,
       description: "The School of Information Technology (IT) at Nanyang Polytechnic (NYP) offers a wide range of cutting-edge courses designed to equip students with the essential skills and knowledge to thrive in the fast-evolving digital world."
     }
   ];
@@ -130,6 +130,16 @@ export default function HumanLibraryPie() {
       
       return now >= shiftStart && now <= shiftEnd;
     });
+  };
+  
+  const getYOffset = (achievementCount) => {
+    const offsets = {
+      0: -150,
+      1: -200,  
+      2: -202.5, 
+      3: -215  
+    };
+    return offsets[achievementCount] || -220;
   };
 
   useEffect(() => {
@@ -353,7 +363,7 @@ export default function HumanLibraryPie() {
             initial={{ x: -400, opacity: 0, scale: 0 }}
             animate={{ 
               x: 210,
-              y: -220,
+              y: getYOffset(selectedStudent.achievements?.length || 0),
               opacity: 1, 
               scale: 1 
             }}
