@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, onSnapshot } from 'firebase/firestore';
@@ -22,6 +22,9 @@ export default function HumanLibraryPie() {
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [studentsData, setStudentsData] = useState([]);
   const [showCategoryFloor, setShowCategoryFloor] = useState(false);
+  const timerRef = useRef(null);
+  const expandTimerRef = useRef(null);
+  const floorIntervalRef = useRef(null);
 
   const baseSlices = [
     { 
@@ -99,6 +102,120 @@ export default function HumanLibraryPie() {
     return () => unsubscribe();
   }, []);
 
+  // REPLACE your current WebSocket useEffect with this:
+  useEffect(() => {
+    let socket;
+    let reconnectTimeout;
+    let connectionAttempts = 0;
+    const maxConnectionAttempts = 10;
+
+    const connectWebSocket = () => {
+      connectionAttempts++;
+      console.log(`🔗 WebSocket connection attempt ${connectionAttempts}/${maxConnectionAttempts}`);
+      
+      try {
+        socket = new WebSocket("ws://192.168.10.126:8765");
+
+        socket.onopen = () => {
+          console.log("✅ SUCCESS: WebSocket Connected to Raspberry Pi!");
+          connectionAttempts = 0;
+          
+          socket.send(JSON.stringify({
+            type: "website_connected",
+            message: "React website connected successfully",
+            timestamp: Date.now()
+          }));
+        };
+
+        socket.onmessage = (event) => {
+          console.log("📨 Raw WebSocket message received:", event.data);
+          
+          try {
+            const data = JSON.parse(event.data);
+            console.log("📊 Parsed WebSocket data:", data);
+            
+            // Handle welcome message
+            if (data.type === "welcome") {
+              console.log("👋 Server welcome:", data.message);
+              return;
+            }
+            
+            // Handle the button press - FIXED: No dependency on stale 'active' state
+            if (data.button === "course_button") {
+              console.log(`🎯 Physical button event: ${data.status}`);
+              
+              // Clear any existing timers
+              clearTimeout(timerRef.current);
+              clearTimeout(expandTimerRef.current);
+              clearInterval(floorIntervalRef.current);
+              
+              if (data.status === "ON") {
+                console.log("🟢 Turning ON course view");
+                setActive("courses");
+                setExpanded(false);
+                setSelectedStudent(null);
+                setShowCategoryFloor(false);
+                
+                // Set up the auto-close timer (30 seconds)
+                timerRef.current = setTimeout(() => {
+                  console.log("⏰ Auto-closing course view after 30 seconds");
+                  setActive(null);
+                  setExpanded(false);
+                  setSelectedStudent(null);
+                  setShowCategoryFloor(false);
+                }, 30000);
+                
+              } else if (data.status === "OFF") {
+                console.log("🔴 Turning OFF course view");
+                setActive(null);
+                setExpanded(false);
+                setSelectedStudent(null);
+                setShowCategoryFloor(false);
+              }
+            }
+          } catch (error) {
+            console.error("❌ Error parsing WebSocket message:", error);
+          }
+        };
+
+        socket.onerror = (error) => {
+          console.error("❌ WebSocket connection error:", error);
+        };
+
+        socket.onclose = (event) => {
+          console.log(`🔌 WebSocket disconnected: Code ${event.code}, Clean: ${event.wasClean}`);
+          
+          // Attempt reconnection
+          if (connectionAttempts < maxConnectionAttempts) {
+            const delay = Math.min(1000 * Math.pow(2, connectionAttempts), 30000);
+            console.log(`🔄 Reconnecting in ${delay}ms...`);
+            reconnectTimeout = setTimeout(connectWebSocket, delay);
+          } else {
+            console.error("❌ Max reconnection attempts reached");
+          }
+        };
+
+      } catch (error) {
+        console.error("❌ Error creating WebSocket:", error);
+      }
+    };
+
+    // Initial connection
+    connectWebSocket();
+
+    // Cleanup function
+    return () => {
+      console.log("🧹 Cleaning up WebSocket connection");
+      if (socket) {
+        socket.close(1000, "Component unmounting");
+      }
+      clearTimeout(reconnectTimeout);
+      clearTimeout(timerRef.current);
+      clearTimeout(expandTimerRef.current);
+      clearInterval(floorIntervalRef.current);
+    };
+  }, []); // Empty dependency array - connect once
+
   // Build slices with students from Firebase
   const slices = baseSlices.map(slice => {
     const categoryStudents = studentsData
@@ -124,7 +241,6 @@ export default function HumanLibraryPie() {
     
     const now = new Date();
     
-    // Check if any shift is currently active
     return student.shifts.some(shift => {
       if (!shift.date || !shift.shiftStart || !shift.shiftEnd) return false;
       
@@ -149,6 +265,7 @@ export default function HumanLibraryPie() {
     return offsets[achievementCount] || -220;
   };
 
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyPress = (e) => {
       const keyMap = {
@@ -161,9 +278,15 @@ export default function HumanLibraryPie() {
       };
       
       if (keyMap[e.key]) {
+        // Clear existing timers when manually toggling
+        clearTimeout(timerRef.current);
+        clearTimeout(expandTimerRef.current);
+        clearInterval(floorIntervalRef.current);
+        
         setActive(prev => prev === keyMap[e.key] ? null : keyMap[e.key]);
         setExpanded(false);
         setSelectedStudent(null);
+        setShowCategoryFloor(false);
       }
     };
     
@@ -171,6 +294,7 @@ export default function HumanLibraryPie() {
     return () => window.removeEventListener('keydown', handleKeyPress);
   }, []);
 
+  // Handle expansion and student selection when active changes
   useEffect(() => {
     if (active) {
       const activeSliceData = slices.find(s => s.id === active);
@@ -180,24 +304,17 @@ export default function HumanLibraryPie() {
         : null;
       setSelectedStudent(randomStudent);
       
-      const expandTimer = setTimeout(() => {
+      expandTimerRef.current = setTimeout(() => {
         setExpanded(true);
       }, 500);
       
-      const autoCloseTimer = setTimeout(() => {
-        setActive(null);
-        setExpanded(false);
-        setSelectedStudent(null);
-      }, 30000);
-
-      const floorTransitionInterval = setInterval(() => {
+      floorIntervalRef.current = setInterval(() => {
         setShowCategoryFloor(prev => !prev);
       }, 2000);
       
       return () => {
-        clearTimeout(expandTimer);
-        clearTimeout(autoCloseTimer);
-        clearInterval(floorTransitionInterval);
+        clearTimeout(expandTimerRef.current);
+        clearInterval(floorIntervalRef.current);
       };
     } else {
       setExpanded(false);
@@ -207,9 +324,15 @@ export default function HumanLibraryPie() {
   }, [active]);
 
   const toggle = (id) => {
+    // Clear existing timers when manually toggling
+    clearTimeout(timerRef.current);
+    clearTimeout(expandTimerRef.current);
+    clearInterval(floorIntervalRef.current);
+    
     setActive(active === id ? null : id);
     setExpanded(false);
     setSelectedStudent(null);
+    setShowCategoryFloor(false);
   };
 
   const getPosition = (angle, distance) => {
