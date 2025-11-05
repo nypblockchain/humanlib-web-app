@@ -21,12 +21,14 @@ export default function HumanLibraryPie() {
   const [expanded, setExpanded] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [studentsData, setStudentsData] = useState([]);
+  const [showCategoryFloor, setShowCategoryFloor] = useState(false);
 
   const baseSlices = [
     { 
       id: "text", 
       label: "The Inside Scoop", 
       img: "/img/text.png", 
+      floorplan: "./img/defaultfloor.png",
       color: "#ffffff27", 
       angle: 0, 
       distance: 0,
@@ -36,6 +38,7 @@ export default function HumanLibraryPie() {
       id: "internships", 
       label: "Internships", 
       img: "/img/internships.png", 
+      floorplan: "./img/internshipfloor.png",  
       color: "#EF4444", 
       angle: -90, 
       distance: 250,
@@ -45,6 +48,7 @@ export default function HumanLibraryPie() {
       id: "overseas", 
       label: "Overseas Opportunities", 
       img: "/img/overseas.png", 
+      floorplan: "./img/defaultfloor.png",
       color: "#22C55E", 
       angle: -90 + 72, 
       distance: 300,
@@ -54,6 +58,7 @@ export default function HumanLibraryPie() {
       id: "professional", 
       label: "Professional Development", 
       img: "/img/professional.png", 
+      floorplan: "./img/defaultfloor.png",
       color: "#BFBFBF", 
       angle: -90 - 72, 
       distance: 300,
@@ -63,6 +68,7 @@ export default function HumanLibraryPie() {
       id: "alumni", 
       label: "Alumni Progression", 
       img: "/img/alumni.png", 
+      floorplan: "./img/defaultfloor.png",
       color: "#FAE316", 
       angle: 126, 
       distance: 300,
@@ -72,6 +78,7 @@ export default function HumanLibraryPie() {
       id: "courses", 
       label: "Courses", 
       img: "/img/courses.png", 
+      floorplan: "./img/defaultfloor.png",
       color: "#3B82F6", 
       angle: 54, 
       distance: 300,
@@ -175,21 +182,27 @@ export default function HumanLibraryPie() {
       
       const expandTimer = setTimeout(() => {
         setExpanded(true);
-      }, 1500);
+      }, 500);
       
       const autoCloseTimer = setTimeout(() => {
         setActive(null);
         setExpanded(false);
         setSelectedStudent(null);
       }, 30000);
+
+      const floorTransitionInterval = setInterval(() => {
+        setShowCategoryFloor(prev => !prev);
+      }, 2000);
       
       return () => {
         clearTimeout(expandTimer);
         clearTimeout(autoCloseTimer);
+        clearInterval(floorTransitionInterval);
       };
     } else {
       setExpanded(false);
       setSelectedStudent(null);
+      setShowCategoryFloor(false);
     }
   }, [active]);
 
@@ -248,7 +261,7 @@ export default function HumanLibraryPie() {
               }}
               initial={false}
               animate={{
-                x: isActive && !expanded ? pos.x : isActive && expanded ? -400 : 0,
+                x: isActive && !expanded ? pos.x : isActive && expanded ? -500 : 0,
                 y: isActive && !expanded ? pos.y : isActive && expanded ? 0 : 0,
                 width: isActive && expanded ? 400 : isActive ? 300 : 500,
                 height: isActive && expanded ? 500 : isActive ? 300 : 500,
@@ -358,16 +371,15 @@ export default function HumanLibraryPie() {
 
       <AnimatePresence>
         {expanded && selectedStudent && activeSlice && (
-          <motion.div
-            key="students-panel"
-            initial={{ x: -400, opacity: 0, scale: 0 }}
+          <>
+            <motion.div
+            key="image-placeholder"
+            initial={{ opacity: 0, scale: 0 }}
             animate={{ 
-              x: 210,
-              y: getYOffset(selectedStudent.achievements?.length || 0),
               opacity: 1, 
               scale: 1 
             }}
-            exit={{ x: -200, opacity: 0, scale: 0 }}
+            exit={{ opacity: 0, scale: 0 }}
             transition={{ 
               type: "spring", 
               stiffness: 150, 
@@ -375,103 +387,116 @@ export default function HumanLibraryPie() {
             }}
             style={{
               position: "absolute",
-              left: "50%",
-              top: "44%",
+              left: "26.7%",
+              top: "10.7%",
               transform: "translate(-50%, -50%)",
-              width: 320,
-              padding: 0,
-              borderRadius: 20,
-              border: `3px solid ${activeSlice.color}`,
-              background: "#fff",
-              boxShadow: `0 8px 32px ${activeSlice.color}40`,
-              zIndex: 25,
+              width: 800,
+              height: 800,
+              borderRadius: 24,
+              zIndex: 15,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
               overflow: "hidden"
             }}
           >
-            <div style={{
-              padding: "35px 30px",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: "20px"
-            }}>
-              <motion.img
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ delay: 0.5, type: "spring", stiffness: 200 }}
-                src={selectedStudent.avatar}
-                alt={selectedStudent.name}
-                style={{
-                  width: 110,
-                  height: 110,
-                  borderRadius: "50%",
-                  border: `5px solid ${activeSlice.color}`,
-                  background: "#fff",
-                  boxShadow: `0 4px 16px ${activeSlice.color}30`
-                }}
-              />
-              
-              <motion.h3 
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.6 }}
-                style={{ 
-                  margin: 0,
-                  fontSize: 24,
-                  fontWeight: 700,
-                  color: "#1a1a1a",
-                  textAlign: "center"
-                }}
-              >
-                {selectedStudent.name}
-              </motion.h3>
-              
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.7 }}
+            <AnimatePresence mode="wait">
+              <motion.img 
+                key={showCategoryFloor ? 'category' : 'default'}
+                src={showCategoryFloor ? activeSlice.floorplan : "./img/defaultfloor.png"}
+                transition={{ duration: 0.15 }}
                 style={{
                   width: "100%",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "12px"
+                  height: "100%",
+                  objectFit: "cover"
                 }}
-              >
-                <motion.div
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.8 }}
+              />
+            </AnimatePresence>
+          </motion.div>
+
+            <motion.div
+              key="students-panel"
+              initial={{ x: -400, opacity: 0, scale: 0 }}
+              animate={{ 
+                x: 305,
+                y: getYOffset(selectedStudent.achievements?.length || 0),
+                opacity: 1, 
+                scale: 1 
+              }}
+              exit={{ x: -200, opacity: 0, scale: 0 }}
+              transition={{ 
+                type: "spring", 
+                stiffness: 150, 
+                damping: 22
+              }}
+              style={{
+                position: "absolute",
+                left: "50%",
+                top: "44%",
+                transform: "translate(-50%, -50%)",
+                width: 320,
+                padding: 0,
+                borderRadius: 20,
+                border: `3px solid ${activeSlice.color}`,
+                background: "#fff",
+                boxShadow: `0 8px 32px ${activeSlice.color}40`,
+                zIndex: 25,
+                overflow: "hidden"
+              }}
+            >
+              <div style={{
+                padding: "35px 30px",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: "20px"
+              }}>
+                <motion.img
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ delay: 0.5, type: "spring", stiffness: 200 }}
+                  src={selectedStudent.avatar}
+                  alt={selectedStudent.name}
                   style={{
-                    background: `${activeSlice.color}15`,
-                    padding: "12px 16px",
-                    borderRadius: "10px",
-                    border: `1px solid ${activeSlice.color}40`
+                    width: 110,
+                    height: 110,
+                    borderRadius: "50%",
+                    border: `5px solid ${activeSlice.color}`,
+                    background: "#fff",
+                    boxShadow: `0 4px 16px ${activeSlice.color}30`
+                  }}
+                />
+                
+                <motion.h3 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.6 }}
+                  style={{ 
+                    margin: 0,
+                    fontSize: 24,
+                    fontWeight: 700,
+                    color: "#1a1a1a",
+                    textAlign: "center"
                   }}
                 >
-                  <div style={{ fontSize: 12, color: "#666", fontWeight: 600, marginBottom: "4px" }}>COURSE</div>
-                  <div style={{ fontSize: 14, color: "#2c3e50", fontWeight: 500 }}>{selectedStudent.course}</div>
-                </motion.div>
-
-                <motion.div
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.85 }}
+                  {selectedStudent.name}
+                </motion.h3>
+                
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.7 }}
                   style={{
-                    background: `${activeSlice.color}15`,
-                    padding: "12px 16px",
-                    borderRadius: "10px",
-                    border: `1px solid ${activeSlice.color}40`
+                    width: "100%",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "12px"
                   }}
                 >
-                  <div style={{ fontSize: 12, color: "#666", fontWeight: 600, marginBottom: "4px" }}>YEAR</div>
-                  <div style={{ fontSize: 14, color: "#2c3e50", fontWeight: 500 }}>{selectedStudent.year}</div>
-                </motion.div>
-
-                {selectedStudent.achievements && selectedStudent.achievements.length > 0 && (
                   <motion.div
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.9 }}
+                    transition={{ delay: 0.8 }}
                     style={{
                       background: `${activeSlice.color}15`,
                       padding: "12px 16px",
@@ -479,33 +504,65 @@ export default function HumanLibraryPie() {
                       border: `1px solid ${activeSlice.color}40`
                     }}
                   >
-                    <div style={{ fontSize: 12, color: "#666", fontWeight: 600, marginBottom: "8px" }}>ACHIEVEMENTS</div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                      {selectedStudent.achievements.map((achievement, idx) => (
-                        <div 
-                          key={idx}
-                          style={{ 
-                            fontSize: 13, 
-                            color: "#2c3e50",
-                            paddingLeft: "12px",
-                            position: "relative"
-                          }}
-                        >
-                          <span style={{ 
-                            position: "absolute", 
-                            left: 0, 
-                            color: activeSlice.color,
-                            fontWeight: 700 
-                          }}>•</span>
-                          {achievement}
-                        </div>
-                      ))}
-                    </div>
+                    <div style={{ fontSize: 12, color: "#666", fontWeight: 600, marginBottom: "4px" }}>COURSE</div>
+                    <div style={{ fontSize: 14, color: "#2c3e50", fontWeight: 500 }}>{selectedStudent.course}</div>
                   </motion.div>
-                )}
-              </motion.div>
-            </div>
-          </motion.div>
+
+                  <motion.div
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.85 }}
+                    style={{
+                      background: `${activeSlice.color}15`,
+                      padding: "12px 16px",
+                      borderRadius: "10px",
+                      border: `1px solid ${activeSlice.color}40`
+                    }}
+                  >
+                    <div style={{ fontSize: 12, color: "#666", fontWeight: 600, marginBottom: "4px" }}>YEAR</div>
+                    <div style={{ fontSize: 14, color: "#2c3e50", fontWeight: 500 }}>{selectedStudent.year}</div>
+                  </motion.div>
+
+                  {selectedStudent.achievements && selectedStudent.achievements.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.9 }}
+                      style={{
+                        background: `${activeSlice.color}15`,
+                        padding: "12px 16px",
+                        borderRadius: "10px",
+                        border: `1px solid ${activeSlice.color}40`
+                      }}
+                    >
+                      <div style={{ fontSize: 12, color: "#666", fontWeight: 600, marginBottom: "8px" }}>ACHIEVEMENTS</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                        {selectedStudent.achievements.map((achievement, idx) => (
+                          <div 
+                            key={idx}
+                            style={{ 
+                              fontSize: 13, 
+                              color: "#2c3e50",
+                              paddingLeft: "12px",
+                              position: "relative"
+                            }}
+                          >
+                            <span style={{ 
+                              position: "absolute", 
+                              left: 0, 
+                              color: activeSlice.color,
+                              fontWeight: 700 
+                            }}>•</span>
+                            {achievement}
+                          </div>
+                        ))}
+                      </div>
+                    </motion.div>
+                  )}
+                </motion.div>
+              </div>
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
     </div>
