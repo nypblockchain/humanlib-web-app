@@ -114,7 +114,7 @@ export default function HumanLibraryPie() {
       console.log(`🔗 WebSocket connection attempt ${connectionAttempts}/${maxConnectionAttempts}`);
       
       try {
-        socket = new WebSocket("ws://192.168.10.126:8765");
+        socket = new WebSocket("wss://192.168.10.126:8765");
 
         socket.onopen = () => {
           console.log("✅ SUCCESS: WebSocket Connected to Raspberry Pi!");
