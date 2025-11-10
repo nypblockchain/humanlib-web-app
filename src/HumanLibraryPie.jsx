@@ -102,7 +102,7 @@ export default function HumanLibraryPie() {
     return () => unsubscribe();
   }, []);
 
-  // REPLACE your current WebSocket useEffect with this:
+  // SECURE WebSocket Connection (WSS)
   useEffect(() => {
     let socket;
     let reconnectTimeout;
@@ -114,15 +114,17 @@ export default function HumanLibraryPie() {
       console.log(`🔗 WebSocket connection attempt ${connectionAttempts}/${maxConnectionAttempts}`);
       
       try {
+        // UPDATED: Use wss:// for secure connection
+        // Replace with your Raspberry Pi's IP or domain
         socket = new WebSocket("wss://192.168.10.126:8765");
 
         socket.onopen = () => {
-          console.log("✅ SUCCESS: WebSocket Connected to Raspberry Pi!");
+          console.log("✅ SUCCESS: Secure WebSocket Connected to Raspberry Pi!");
           connectionAttempts = 0;
           
           socket.send(JSON.stringify({
             type: "website_connected",
-            message: "React website connected successfully",
+            message: "React website connected via WSS",
             timestamp: Date.now()
           }));
         };
@@ -140,7 +142,7 @@ export default function HumanLibraryPie() {
               return;
             }
             
-            // Handle the button press - FIXED: No dependency on stale 'active' state
+            // Handle the button press
             if (data.button === "course_button") {
               console.log(`🎯 Physical button event: ${data.status}`);
               
@@ -180,6 +182,8 @@ export default function HumanLibraryPie() {
 
         socket.onerror = (error) => {
           console.error("❌ WebSocket connection error:", error);
+          console.log("💡 TIP: If using self-signed certificate, you may need to accept the security warning first");
+          console.log("💡 Visit https://192.168.10.126:8765 in your browser and accept the certificate");
         };
 
         socket.onclose = (event) => {
