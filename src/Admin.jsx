@@ -68,7 +68,7 @@ export default function AdminPanel() {
 
   const dateOptions = [
     // !!!!!!!!!!!!!!!!!!!!!!!!!!!
-    { value: '31/10/2025', label: '8 January' },
+    { value: '6/11/2025', label: '8 January' },
     { value: '09/01/2026', label: '9 January' },
     { value: '10/01/2026', label: '10 January' }
   ];
