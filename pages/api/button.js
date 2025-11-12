@@ -15,6 +15,12 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 export default async function handler(req, res) {
+  console.log("API hit:", req.method);
+
+  if (req.method === 'GET') {
+    return res.status(200).json({ message: 'Button API online ✅' });
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ message: 'Method not allowed' });
   }
@@ -29,11 +35,6 @@ export default async function handler(req, res) {
     return res.status(400).json({ message: 'Missing button or status' });
   }
 
-  try {
-    await setDoc(doc(db, 'button_state', button), { status, timestamp: Date.now() });
-    return res.status(200).json({ message: 'Button state updated' });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: 'Internal Server Error' });
-  }
+  return res.status(200).json({ message: 'Button state updated' });
 }
+
