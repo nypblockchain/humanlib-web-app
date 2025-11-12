@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, onSnapshot } from 'firebase/firestore';
+import { getFirestore, collection, onSnapshot, doc } from 'firebase/firestore';
+
 
 const firebaseConfig = {
   apiKey: "AIzaSyDiYNFFyKmjhViYMo9YPPcZGSuNTqX2Ido",
@@ -102,123 +103,58 @@ export default function HumanLibraryPie() {
     return () => unsubscribe();
   }, []);
 
-  // SECURE WebSocket Connection (WSS)
+  // Firebase listener for button state changes
   useEffect(() => {
-    let socket;
-    let reconnectTimeout;
-    let connectionAttempts = 0;
-    const maxConnectionAttempts = 10;
-
-    const connectWebSocket = () => {
-      connectionAttempts++;
-      console.log(`🔗 WebSocket connection attempt ${connectionAttempts}/${maxConnectionAttempts}`);
-      
-      try {
-        // UPDATED: Use wss:// for secure connection
-        // Replace with your Raspberry Pi's IP or domain
-        socket = new WebSocket("wss://192.168.10.126:8765");
-
-        socket.onopen = () => {
-          console.log("✅ SUCCESS: Secure WebSocket Connected to Raspberry Pi!");
-          connectionAttempts = 0;
+    console.log("🔥 Setting up Firebase listener for button state...");
+    
+    const unsubscribe = onSnapshot(doc(db, 'button_state', 'course_button'), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        console.log("📌 Button update from Firebase:", data);
+        
+        // Clear any existing timers
+        clearTimeout(timerRef.current);
+        clearTimeout(expandTimerRef.current);
+        clearInterval(floorIntervalRef.current);
+        
+        if (data.status === "ON") {
+          console.log("🟢 Firebase: Turning ON course view");
+          setActive("courses");
+          setExpanded(false);
+          setSelectedStudent(null);
+          setShowCategoryFloor(false);
           
-          socket.send(JSON.stringify({
-            type: "website_connected",
-            message: "React website connected via WSS",
-            timestamp: Date.now()
-          }));
-        };
-
-        socket.onmessage = (event) => {
-          console.log("📨 Raw WebSocket message received:", event.data);
+          // Set up the auto-close timer (30 seconds)
+          timerRef.current = setTimeout(() => {
+            console.log("⏰ Auto-closing course view after 30 seconds");
+            setActive(null);
+            setExpanded(false);
+            setSelectedStudent(null);
+            setShowCategoryFloor(false);
+          }, 30000);
           
-          try {
-            const data = JSON.parse(event.data);
-            console.log("📊 Parsed WebSocket data:", data);
-            
-            // Handle welcome message
-            if (data.type === "welcome") {
-              console.log("👋 Server welcome:", data.message);
-              return;
-            }
-            
-            // Handle the button press
-            if (data.button === "course_button") {
-              console.log(`🎯 Physical button event: ${data.status}`);
-              
-              // Clear any existing timers
-              clearTimeout(timerRef.current);
-              clearTimeout(expandTimerRef.current);
-              clearInterval(floorIntervalRef.current);
-              
-              if (data.status === "ON") {
-                console.log("🟢 Turning ON course view");
-                setActive("courses");
-                setExpanded(false);
-                setSelectedStudent(null);
-                setShowCategoryFloor(false);
-                
-                // Set up the auto-close timer (30 seconds)
-                timerRef.current = setTimeout(() => {
-                  console.log("⏰ Auto-closing course view after 30 seconds");
-                  setActive(null);
-                  setExpanded(false);
-                  setSelectedStudent(null);
-                  setShowCategoryFloor(false);
-                }, 30000);
-                
-              } else if (data.status === "OFF") {
-                console.log("🔴 Turning OFF course view");
-                setActive(null);
-                setExpanded(false);
-                setSelectedStudent(null);
-                setShowCategoryFloor(false);
-              }
-            }
-          } catch (error) {
-            console.error("❌ Error parsing WebSocket message:", error);
-          }
-        };
-
-        socket.onerror = (error) => {
-          console.error("❌ WebSocket connection error:", error);
-          console.log("💡 TIP: If using self-signed certificate, you may need to accept the security warning first");
-          console.log("💡 Visit https://192.168.10.126:8765 in your browser and accept the certificate");
-        };
-
-        socket.onclose = (event) => {
-          console.log(`🔌 WebSocket disconnected: Code ${event.code}, Clean: ${event.wasClean}`);
-          
-          // Attempt reconnection
-          if (connectionAttempts < maxConnectionAttempts) {
-            const delay = Math.min(1000 * Math.pow(2, connectionAttempts), 30000);
-            console.log(`🔄 Reconnecting in ${delay}ms...`);
-            reconnectTimeout = setTimeout(connectWebSocket, delay);
-          } else {
-            console.error("❌ Max reconnection attempts reached");
-          }
-        };
-
-      } catch (error) {
-        console.error("❌ Error creating WebSocket:", error);
+        } else if (data.status === "OFF") {
+          console.log("🔴 Firebase: Turning OFF course view");
+          setActive(null);
+          setExpanded(false);
+          setSelectedStudent(null);
+          setShowCategoryFloor(false);
+        }
+      } else {
+        console.log("⚠️ Firebase: Button state document doesn't exist yet");
       }
-    };
+    }, (error) => {
+      console.error("❌ Firebase listener error:", error);
+    });
 
-    // Initial connection
-    connectWebSocket();
-
-    // Cleanup function
     return () => {
-      console.log("🧹 Cleaning up WebSocket connection");
-      if (socket) {
-        socket.close(1000, "Component unmounting");
-      }
-      clearTimeout(reconnectTimeout);
+      console.log("🧹 Cleaning up Firebase listener");
+      unsubscribe();
       clearTimeout(timerRef.current);
       clearTimeout(expandTimerRef.current);
       clearInterval(floorIntervalRef.current);
     };
-  }, []); // Empty dependency array - connect once
+  }, []);
 
   // Build slices with students from Firebase
   const slices = baseSlices.map(slice => {
