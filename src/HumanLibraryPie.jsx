@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, onSnapshot, doc } from 'firebase/firestore';
-
+import { getFirestore, collection, onSnapshot } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: "AIzaSyDiYNFFyKmjhViYMo9YPPcZGSuNTqX2Ido",
@@ -17,15 +16,27 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
+// Configuration for multiple Raspberry Pis
+const PI_CONNECTIONS = [
+  { ip: '192.168.10.126', port: 8765, category: 'courses' },
+  { ip: '192.168.10.127', port: 8766, category: 'internships' },
+  { ip: '192.168.10.128', port: 8767, category: 'overseas' },
+  { ip: '192.168.10.129', port: 8768, category: 'professional' },
+  { ip: '192.168.10.130', port: 8769, category: 'alumni' }
+];
+
 export default function HumanLibraryPie() {
   const [active, setActive] = useState(null);
   const [expanded, setExpanded] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [studentsData, setStudentsData] = useState([]);
   const [showCategoryFloor, setShowCategoryFloor] = useState(false);
-  const timerRef = useRef(null);
+  const [piConnections, setPiConnections] = useState({});
+  
+  const timersRef = useRef({});
   const expandTimerRef = useRef(null);
   const floorIntervalRef = useRef(null);
+  const socketsRef = useRef({});
 
   const baseSlices = [
     { 
@@ -103,54 +114,143 @@ export default function HumanLibraryPie() {
     return () => unsubscribe();
   }, []);
 
-  // Firebase listener for button state changes
+  // Multi-Pi WebSocket connections
   useEffect(() => {
-    console.log("🔥 Setting up Firebase listener for button state...");
-    
-    const unsubscribe = onSnapshot(doc(db, 'button_state', 'course_button'), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        console.log("📌 Button update from Firebase:", data);
-        
-        // Clear any existing timers
-        clearTimeout(timerRef.current);
-        clearTimeout(expandTimerRef.current);
-        clearInterval(floorIntervalRef.current);
-        
-        if (data.status === "ON") {
-          console.log("🟢 Firebase: Turning ON course view");
-          setActive("courses");
-          setExpanded(false);
-          setSelectedStudent(null);
-          setShowCategoryFloor(false);
-          
-          // Set up the auto-close timer (30 seconds)
-          timerRef.current = setTimeout(() => {
-            console.log("⏰ Auto-closing course view after 30 seconds");
-            setActive(null);
-            setExpanded(false);
-            setSelectedStudent(null);
-            setShowCategoryFloor(false);
-          }, 30000);
-          
-        } else if (data.status === "OFF") {
-          console.log("🔴 Firebase: Turning OFF course view");
-          setActive(null);
-          setExpanded(false);
-          setSelectedStudent(null);
-          setShowCategoryFloor(false);
-        }
-      } else {
-        console.log("⚠️ Firebase: Button state document doesn't exist yet");
-      }
-    }, (error) => {
-      console.error("❌ Firebase listener error:", error);
-    });
+    const connectToPi = ({ ip, port, category }) => {
+      let socket;
+      let reconnectTimeout;
+      let connectionAttempts = 0;
+      const maxConnectionAttempts = 10;
 
+      const connect = () => {
+        connectionAttempts++;
+        console.log(`🔗 [${category.toUpperCase()}] WebSocket connection attempt ${connectionAttempts}/${maxConnectionAttempts}`);
+        
+        try {
+          socket = new WebSocket(`ws://${ip}:${port}`);
+
+          socket.onopen = () => {
+            console.log(`✅ [${category.toUpperCase()}] WebSocket Connected!`);
+            connectionAttempts = 0;
+            
+            setPiConnections(prev => ({
+              ...prev,
+              [category]: { connected: true, ip, port }
+            }));
+            
+            socket.send(JSON.stringify({
+              type: "website_connected",
+              message: `React website connected to ${category}`,
+              timestamp: Date.now()
+            }));
+          };
+
+          socket.onmessage = (event) => {
+            console.log(`📨 [${category.toUpperCase()}] Raw message:`, event.data);
+            
+            try {
+              const data = JSON.parse(event.data);
+              console.log(`📊 [${category.toUpperCase()}] Parsed data:`, data);
+              
+              // Handle welcome message
+              if (data.type === "welcome") {
+                console.log(`👋 [${category.toUpperCase()}] Server welcome:`, data.message);
+                return;
+              }
+              
+              // Handle button press for this specific category
+              const expectedButton = `${category}_button`;
+              if (data.button === expectedButton) {
+                console.log(`🎯 [${category.toUpperCase()}] Button event: ${data.status}`);
+                
+                // Clear any existing timers
+                if (timersRef.current[category]) {
+                  clearTimeout(timersRef.current[category]);
+                }
+                clearTimeout(expandTimerRef.current);
+                clearInterval(floorIntervalRef.current);
+                
+                if (data.status === "ON") {
+                  console.log(`🟢 [${category.toUpperCase()}] Activating view`);
+                  setActive(category);
+                  setExpanded(false);
+                  setSelectedStudent(null);
+                  setShowCategoryFloor(false);
+                  
+                  // Set up the auto-close timer (30 seconds)
+                  timersRef.current[category] = setTimeout(() => {
+                    console.log(`⏰ [${category.toUpperCase()}] Auto-closing after 30 seconds`);
+                    setActive(null);
+                    setExpanded(false);
+                    setSelectedStudent(null);
+                    setShowCategoryFloor(false);
+                  }, 30000);
+                  
+                } else if (data.status === "OFF") {
+                  console.log(`🔴 [${category.toUpperCase()}] Deactivating view`);
+                  setActive(null);
+                  setExpanded(false);
+                  setSelectedStudent(null);
+                  setShowCategoryFloor(false);
+                }
+              }
+            } catch (error) {
+              console.error(`❌ [${category.toUpperCase()}] Error parsing message:`, error);
+            }
+          };
+
+          socket.onerror = (error) => {
+            console.error(`❌ [${category.toUpperCase()}] WebSocket error:`, error);
+          };
+
+          socket.onclose = (event) => {
+            console.log(`🔌 [${category.toUpperCase()}] WebSocket disconnected: Code ${event.code}`);
+            
+            setPiConnections(prev => ({
+              ...prev,
+              [category]: { connected: false, ip, port }
+            }));
+            
+            // Attempt reconnection
+            if (connectionAttempts < maxConnectionAttempts) {
+              const delay = Math.min(1000 * Math.pow(2, connectionAttempts), 30000);
+              console.log(`🔄 [${category.toUpperCase()}] Reconnecting in ${delay}ms...`);
+              reconnectTimeout = setTimeout(connect, delay);
+            } else {
+              console.error(`❌ [${category.toUpperCase()}] Max reconnection attempts reached`);
+            }
+          };
+
+          // Store socket reference
+          socketsRef.current[category] = socket;
+
+        } catch (error) {
+          console.error(`❌ [${category.toUpperCase()}] Error creating WebSocket:`, error);
+        }
+      };
+
+      // Initial connection
+      connect();
+
+      // Return cleanup function
+      return () => {
+        console.log(`🧹 [${category.toUpperCase()}] Cleaning up WebSocket`);
+        if (socket) {
+          socket.close(1000, "Component unmounting");
+        }
+        clearTimeout(reconnectTimeout);
+        if (timersRef.current[category]) {
+          clearTimeout(timersRef.current[category]);
+        }
+      };
+    };
+
+    // Connect to all Pis
+    const cleanupFunctions = PI_CONNECTIONS.map(connectToPi);
+
+    // Cleanup all connections on unmount
     return () => {
-      console.log("🧹 Cleaning up Firebase listener");
-      unsubscribe();
-      clearTimeout(timerRef.current);
+      cleanupFunctions.forEach(cleanup => cleanup());
       clearTimeout(expandTimerRef.current);
       clearInterval(floorIntervalRef.current);
     };
@@ -218,12 +318,14 @@ export default function HumanLibraryPie() {
       };
       
       if (keyMap[e.key]) {
-        // Clear existing timers when manually toggling
-        clearTimeout(timerRef.current);
+        const category = keyMap[e.key];
+        
+        // Clear existing timers
+        Object.values(timersRef.current).forEach(timer => clearTimeout(timer));
         clearTimeout(expandTimerRef.current);
         clearInterval(floorIntervalRef.current);
         
-        setActive(prev => prev === keyMap[e.key] ? null : keyMap[e.key]);
+        setActive(prev => prev === category ? null : category);
         setExpanded(false);
         setSelectedStudent(null);
         setShowCategoryFloor(false);
@@ -264,8 +366,8 @@ export default function HumanLibraryPie() {
   }, [active]);
 
   const toggle = (id) => {
-    // Clear existing timers when manually toggling
-    clearTimeout(timerRef.current);
+    // Clear existing timers
+    Object.values(timersRef.current).forEach(timer => clearTimeout(timer));
     clearTimeout(expandTimerRef.current);
     clearInterval(floorIntervalRef.current);
     
@@ -285,6 +387,9 @@ export default function HumanLibraryPie() {
 
   const activeSlice = slices.find(s => s.id === active);
 
+  // Connection status indicator
+  const connectedCount = Object.values(piConnections).filter(conn => conn.connected).length;
+
   return (
     <div style={{
       width: "100vw",
@@ -296,7 +401,7 @@ export default function HumanLibraryPie() {
       background: "#f8f9fa",
       overflow: "hidden"
     }}>
-      
+
       <div style={{
         width: 800,
         height: 800,
@@ -436,46 +541,46 @@ export default function HumanLibraryPie() {
         {expanded && selectedStudent && activeSlice && (
           <>
             <motion.div
-            key="image-placeholder"
-            initial={{ opacity: 0, scale: 0 }}
-            animate={{ 
-              opacity: 1, 
-              scale: 1 
-            }}
-            exit={{ opacity: 0, scale: 0 }}
-            transition={{ 
-              type: "spring", 
-              stiffness: 150, 
-              damping: 22
-            }}
-            style={{
-              position: "absolute",
-              left: "26.7%",
-              top: "10.7%",
-              transform: "translate(-50%, -50%)",
-              width: 800,
-              height: 800,
-              borderRadius: 24,
-              zIndex: 15,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              overflow: "hidden"
-            }}
-          >
-            <AnimatePresence mode="wait">
-              <motion.img 
-                key={showCategoryFloor ? 'category' : 'default'}
-                src={showCategoryFloor ? activeSlice.floorplan : "./img/defaultfloor.png"}
-                transition={{ duration: 0.15 }}
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover"
-                }}
-              />
-            </AnimatePresence>
-          </motion.div>
+              key="image-placeholder"
+              initial={{ opacity: 0, scale: 0 }}
+              animate={{ 
+                opacity: 1, 
+                scale: 1 
+              }}
+              exit={{ opacity: 0, scale: 0 }}
+              transition={{ 
+                type: "spring", 
+                stiffness: 150, 
+                damping: 22
+              }}
+              style={{
+                position: "absolute",
+                left: "26.7%",
+                top: "10.7%",
+                transform: "translate(-50%, -50%)",
+                width: 800,
+                height: 800,
+                borderRadius: 24,
+                zIndex: 15,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                overflow: "hidden"
+              }}
+            >
+              <AnimatePresence mode="wait">
+                <motion.img 
+                  key={showCategoryFloor ? 'category' : 'default'}
+                  src={showCategoryFloor ? activeSlice.floorplan : "./img/defaultfloor.png"}
+                  transition={{ duration: 0.15 }}
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover"
+                  }}
+                />
+              </AnimatePresence>
+            </motion.div>
 
             <motion.div
               key="students-panel"
