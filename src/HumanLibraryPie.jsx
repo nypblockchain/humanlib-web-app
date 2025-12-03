@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, onSnapshot } from 'firebase/firestore';
@@ -18,11 +18,11 @@ const db = getFirestore(app);
 
 // Configuration for multiple Raspberry Pis
 const PI_CONNECTIONS = [
-  { ip: '192.168.10.126', port: 8765, category: 'courses' },
+  { ip: '192.168.10.124', port: 8765, category: 'courses' },
   { ip: '192.168.10.127', port: 8766, category: 'internships' },
   { ip: '192.168.10.128', port: 8767, category: 'overseas' },
   { ip: '192.168.10.129', port: 8768, category: 'professional' },
-  { ip: '192.168.10.130', port: 8769, category: 'alumni' }
+  { ip: '192.168.10.137', port: 8769, category: 'alumni' }
 ];
 
 export default function HumanLibraryPie() {
@@ -114,7 +114,7 @@ export default function HumanLibraryPie() {
     return () => unsubscribe();
   }, []);
 
-  // Multi-Pi WebSocket connections
+  // Multi-Pi WebSocket connections with optimizations
   useEffect(() => {
     const connectToPi = ({ ip, port, category }) => {
       let socket;
@@ -124,15 +124,14 @@ export default function HumanLibraryPie() {
 
       const connect = () => {
         connectionAttempts++;
-        console.log(`🔗 [${category.toUpperCase()}] WebSocket connection attempt ${connectionAttempts}/${maxConnectionAttempts}`);
         
         try {
           socket = new WebSocket(`ws://${ip}:${port}`);
 
           socket.onopen = () => {
-            console.log(`✅ [${category.toUpperCase()}] WebSocket Connected!`);
             connectionAttempts = 0;
             
+            // Batch state update
             setPiConnections(prev => ({
               ...prev,
               [category]: { connected: true, ip, port }
@@ -146,32 +145,23 @@ export default function HumanLibraryPie() {
           };
 
           socket.onmessage = (event) => {
-            console.log(`📨 [${category.toUpperCase()}] Raw message:`, event.data);
-            
             try {
               const data = JSON.parse(event.data);
-              console.log(`📊 [${category.toUpperCase()}] Parsed data:`, data);
               
-              // Handle welcome message
-              if (data.type === "welcome") {
-                console.log(`👋 [${category.toUpperCase()}] Server welcome:`, data.message);
-                return;
-              }
+              // Ignore welcome messages
+              if (data.type === "welcome") return;
               
               // Handle button press for this specific category
               const expectedButton = `${category}_button`;
               if (data.button === expectedButton) {
-                console.log(`🎯 [${category.toUpperCase()}] Button event: ${data.status}`);
-                
-                // Clear any existing timers
-                if (timersRef.current[category]) {
-                  clearTimeout(timersRef.current[category]);
-                }
-                clearTimeout(expandTimerRef.current);
-                clearInterval(floorIntervalRef.current);
                 
                 if (data.status === "ON") {
-                  console.log(`🟢 [${category.toUpperCase()}] Activating view`);
+                  // Clear ALL existing timers first
+                  Object.values(timersRef.current).forEach(timer => clearTimeout(timer));
+                  clearTimeout(expandTimerRef.current);
+                  clearInterval(floorIntervalRef.current);
+                  
+                  // Single batched state update
                   setActive(category);
                   setExpanded(false);
                   setSelectedStudent(null);
@@ -179,7 +169,6 @@ export default function HumanLibraryPie() {
                   
                   // Set up the auto-close timer (30 seconds)
                   timersRef.current[category] = setTimeout(() => {
-                    console.log(`⏰ [${category.toUpperCase()}] Auto-closing after 30 seconds`);
                     setActive(null);
                     setExpanded(false);
                     setSelectedStudent(null);
@@ -187,7 +176,12 @@ export default function HumanLibraryPie() {
                   }, 30000);
                   
                 } else if (data.status === "OFF") {
-                  console.log(`🔴 [${category.toUpperCase()}] Deactivating view`);
+                  // Clear timers
+                  Object.values(timersRef.current).forEach(timer => clearTimeout(timer));
+                  clearTimeout(expandTimerRef.current);
+                  clearInterval(floorIntervalRef.current);
+                  
+                  // Single batched state update
                   setActive(null);
                   setExpanded(false);
                   setSelectedStudent(null);
@@ -195,29 +189,24 @@ export default function HumanLibraryPie() {
                 }
               }
             } catch (error) {
-              console.error(`❌ [${category.toUpperCase()}] Error parsing message:`, error);
+              console.error(`[${category}] Parse error:`, error);
             }
           };
 
-          socket.onerror = (error) => {
-            console.error(`❌ [${category.toUpperCase()}] WebSocket error:`, error);
+          socket.onerror = () => {
+            // Reduce console spam
           };
 
           socket.onclose = (event) => {
-            console.log(`🔌 [${category.toUpperCase()}] WebSocket disconnected: Code ${event.code}`);
-            
             setPiConnections(prev => ({
               ...prev,
               [category]: { connected: false, ip, port }
             }));
             
-            // Attempt reconnection
+            // Attempt reconnection with exponential backoff
             if (connectionAttempts < maxConnectionAttempts) {
               const delay = Math.min(1000 * Math.pow(2, connectionAttempts), 30000);
-              console.log(`🔄 [${category.toUpperCase()}] Reconnecting in ${delay}ms...`);
               reconnectTimeout = setTimeout(connect, delay);
-            } else {
-              console.error(`❌ [${category.toUpperCase()}] Max reconnection attempts reached`);
             }
           };
 
@@ -225,7 +214,7 @@ export default function HumanLibraryPie() {
           socketsRef.current[category] = socket;
 
         } catch (error) {
-          console.error(`❌ [${category.toUpperCase()}] Error creating WebSocket:`, error);
+          console.error(`[${category}] Connection error:`, error);
         }
       };
 
@@ -234,7 +223,6 @@ export default function HumanLibraryPie() {
 
       // Return cleanup function
       return () => {
-        console.log(`🧹 [${category.toUpperCase()}] Cleaning up WebSocket`);
         if (socket) {
           socket.close(1000, "Component unmounting");
         }
@@ -256,24 +244,26 @@ export default function HumanLibraryPie() {
     };
   }, []);
 
-  // Build slices with students from Firebase
-  const slices = baseSlices.map(slice => {
-    const categoryStudents = studentsData
-      .filter(student => student.category === slice.id)
-      .map(student => ({
-        name: student.name,
-        avatar: student.avatar,
-        course: student.course,
-        year: student.year,
-        achievements: student.achievements || [],
-        shifts: student.shifts || []
-      }));
+  // Build slices with students from Firebase (memoized)
+  const slices = useMemo(() => {
+    return baseSlices.map(slice => {
+      const categoryStudents = studentsData
+        .filter(student => student.category === slice.id)
+        .map(student => ({
+          name: student.name,
+          avatar: student.avatar,
+          course: student.course,
+          year: student.year,
+          achievements: student.achievements || [],
+          shifts: student.shifts || []
+        }));
 
-    return {
-      ...slice,
-      students: categoryStudents
-    };
-  });
+      return {
+        ...slice,
+        students: categoryStudents
+      };
+    });
+  }, [studentsData]);
 
   // Check if student is available for any of their shifts
   const isStudentAvailable = (student) => {
@@ -338,14 +328,21 @@ export default function HumanLibraryPie() {
 
   // Handle expansion and student selection when active changes
   useEffect(() => {
+    // Clear all existing timers first
+    clearTimeout(expandTimerRef.current);
+    clearInterval(floorIntervalRef.current);
+    
     if (active) {
       const activeSliceData = slices.find(s => s.id === active);
+      if (!activeSliceData) return;
+      
       const availableStudents = activeSliceData.students.filter(isStudentAvailable);
       const randomStudent = availableStudents.length > 0 
         ? availableStudents[Math.floor(Math.random() * availableStudents.length)]
         : null;
       setSelectedStudent(randomStudent);
       
+      // Use setTimeout directly without requestAnimationFrame
       expandTimerRef.current = setTimeout(() => {
         setExpanded(true);
       }, 500);
@@ -363,7 +360,7 @@ export default function HumanLibraryPie() {
       setSelectedStudent(null);
       setShowCategoryFloor(false);
     }
-  }, [active]);
+  }, [active, studentsData]);
 
   const toggle = (id) => {
     // Clear existing timers
