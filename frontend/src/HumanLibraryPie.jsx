@@ -1,29 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, onSnapshot } from 'firebase/firestore';
 
-const firebaseConfig = {
-  apiKey: "AIzaSyDiYNFFyKmjhViYMo9YPPcZGSuNTqX2Ido",
-  authDomain: "humanlib-e647f.firebaseapp.com",
-  projectId: "humanlib-e647f",
-  storageBucket: "humanlib-e647f.firebasestorage.app",
-  messagingSenderId: "207013774871",
-  appId: "1:207013774871:web:6a3e2524b6d7e0e4677e52",
-  measurementId: "G-XN1WM6QKVX"
-};
-
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-
-// Configuration for multiple Raspberry Pis
-const PI_CONNECTIONS = [
-  { ip: '192.168.10.124', port: 8765, category: 'courses' },
-  { ip: '192.168.10.127', port: 8766, category: 'internships' },
-  { ip: '192.168.10.128', port: 8767, category: 'overseas' },
-  { ip: '192.168.10.129', port: 8768, category: 'professional' },
-  { ip: '192.168.10.137', port: 8769, category: 'alumni' }
-];
+// API Configuration
+const API_BASE_URL = 'http://localhost:3001/api';
 
 export default function HumanLibraryPie() {
   const [active, setActive] = useState(null);
@@ -32,11 +11,21 @@ export default function HumanLibraryPie() {
   const [studentsData, setStudentsData] = useState([]);
   const [showCategoryFloor, setShowCategoryFloor] = useState(false);
   const [piConnections, setPiConnections] = useState({});
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [dataSource, setDataSource] = useState('checking...');
   
   const timersRef = useRef({});
   const expandTimerRef = useRef(null);
   const floorIntervalRef = useRef(null);
   const socketsRef = useRef({});
+
+  const PI_CONNECTIONS = [
+    { ip: '172.20.10.4', port: 8765, category: 'courses' },
+    { ip: '192.168.10.127', port: 8766, category: 'internships' },
+    { ip: '172.20.10.0', port: 8769, category: 'overseas' },
+    { ip: '192.168.10.129', port: 8768, category: 'professional' },
+    { ip: '172.20.10.2', port: 8769, category: 'alumni' }
+  ];
 
   const baseSlices = [
     { 
@@ -101,20 +90,43 @@ export default function HumanLibraryPie() {
     }
   ];
 
-  // Real-time listener for students from Firebase
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, 'students'), (snapshot) => {
-      const students = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setStudentsData(students);
-    });
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
 
-    return () => unsubscribe();
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
 
-  // Multi-Pi WebSocket connections with optimizations
+  useEffect(() => {
+    const fetchStudents = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/students`);
+        const data = await response.json();
+        
+        setStudentsData(data.students || []);
+        setDataSource(data.source || 'unknown');
+      } catch (error) {
+        console.error('Error fetching students:', error);
+        setDataSource('error');
+      }
+    };
+
+    // Initial fetch
+    fetchStudents();
+
+    // Poll every 5 seconds to get updates
+    const interval = setInterval(fetchStudents, 5000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // Multi-Pi WebSocket connections
   useEffect(() => {
     const connectToPi = ({ ip, port, category }) => {
       let socket;
@@ -130,8 +142,6 @@ export default function HumanLibraryPie() {
 
           socket.onopen = () => {
             connectionAttempts = 0;
-            
-            // Batch state update
             setPiConnections(prev => ({
               ...prev,
               [category]: { connected: true, ip, port }
@@ -147,27 +157,20 @@ export default function HumanLibraryPie() {
           socket.onmessage = (event) => {
             try {
               const data = JSON.parse(event.data);
-              
-              // Ignore welcome messages
               if (data.type === "welcome") return;
               
-              // Handle button press for this specific category
               const expectedButton = `${category}_button`;
               if (data.button === expectedButton) {
-                
                 if (data.status === "ON") {
-                  // Clear ALL existing timers first
                   Object.values(timersRef.current).forEach(timer => clearTimeout(timer));
                   clearTimeout(expandTimerRef.current);
                   clearInterval(floorIntervalRef.current);
                   
-                  // Single batched state update
                   setActive(category);
                   setExpanded(false);
                   setSelectedStudent(null);
                   setShowCategoryFloor(false);
                   
-                  // Set up the auto-close timer (30 seconds)
                   timersRef.current[category] = setTimeout(() => {
                     setActive(null);
                     setExpanded(false);
@@ -176,12 +179,10 @@ export default function HumanLibraryPie() {
                   }, 30000);
                   
                 } else if (data.status === "OFF") {
-                  // Clear timers
                   Object.values(timersRef.current).forEach(timer => clearTimeout(timer));
                   clearTimeout(expandTimerRef.current);
                   clearInterval(floorIntervalRef.current);
                   
-                  // Single batched state update
                   setActive(null);
                   setExpanded(false);
                   setSelectedStudent(null);
@@ -193,50 +194,35 @@ export default function HumanLibraryPie() {
             }
           };
 
-          socket.onerror = () => {
-            // Reduce console spam
-          };
-
-          socket.onclose = (event) => {
+          socket.onclose = () => {
             setPiConnections(prev => ({
               ...prev,
               [category]: { connected: false, ip, port }
             }));
             
-            // Attempt reconnection with exponential backoff
             if (connectionAttempts < maxConnectionAttempts) {
               const delay = Math.min(1000 * Math.pow(2, connectionAttempts), 30000);
               reconnectTimeout = setTimeout(connect, delay);
             }
           };
 
-          // Store socket reference
           socketsRef.current[category] = socket;
-
         } catch (error) {
           console.error(`[${category}] Connection error:`, error);
         }
       };
 
-      // Initial connection
       connect();
 
-      // Return cleanup function
       return () => {
-        if (socket) {
-          socket.close(1000, "Component unmounting");
-        }
+        if (socket) socket.close(1000, "Component unmounting");
         clearTimeout(reconnectTimeout);
-        if (timersRef.current[category]) {
-          clearTimeout(timersRef.current[category]);
-        }
+        if (timersRef.current[category]) clearTimeout(timersRef.current[category]);
       };
     };
 
-    // Connect to all Pis
     const cleanupFunctions = PI_CONNECTIONS.map(connectToPi);
 
-    // Cleanup all connections on unmount
     return () => {
       cleanupFunctions.forEach(cleanup => cleanup());
       clearTimeout(expandTimerRef.current);
@@ -244,7 +230,6 @@ export default function HumanLibraryPie() {
     };
   }, []);
 
-  // Build slices with students from Firebase (memoized)
   const slices = useMemo(() => {
     return baseSlices.map(slice => {
       const categoryStudents = studentsData
@@ -258,14 +243,10 @@ export default function HumanLibraryPie() {
           shifts: student.shifts || []
         }));
 
-      return {
-        ...slice,
-        students: categoryStudents
-      };
+      return { ...slice, students: categoryStudents };
     });
   }, [studentsData]);
 
-  // Check if student is available for any of their shifts
   const isStudentAvailable = (student) => {
     if (!student.shifts || student.shifts.length === 0) return true;
     
@@ -286,31 +267,19 @@ export default function HumanLibraryPie() {
   };
   
   const getYOffset = (achievementCount) => {
-    const offsets = {
-      0: -150,
-      1: -200,  
-      2: -202.5, 
-      3: -215  
-    };
+    const offsets = { 0: -150, 1: -200, 2: -202.5, 3: -215 };
     return offsets[achievementCount] || -220;
   };
 
-  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyPress = (e) => {
       const keyMap = {
-        '1': 'internships',
-        '2': 'overseas',
-        '3': 'professional',
-        '4': 'alumni',
-        '5': 'courses',
-        '6': 'text'
+        '1': 'internships', '2': 'overseas', '3': 'professional',
+        '4': 'alumni', '5': 'courses', '6': 'text'
       };
       
       if (keyMap[e.key]) {
         const category = keyMap[e.key];
-        
-        // Clear existing timers
         Object.values(timersRef.current).forEach(timer => clearTimeout(timer));
         clearTimeout(expandTimerRef.current);
         clearInterval(floorIntervalRef.current);
@@ -326,9 +295,7 @@ export default function HumanLibraryPie() {
     return () => window.removeEventListener('keydown', handleKeyPress);
   }, []);
 
-  // Handle expansion and student selection when active changes
   useEffect(() => {
-    // Clear all existing timers first
     clearTimeout(expandTimerRef.current);
     clearInterval(floorIntervalRef.current);
     
@@ -342,11 +309,7 @@ export default function HumanLibraryPie() {
         : null;
       setSelectedStudent(randomStudent);
       
-      // Use setTimeout directly without requestAnimationFrame
-      expandTimerRef.current = setTimeout(() => {
-        setExpanded(true);
-      }, 500);
-      
+      expandTimerRef.current = setTimeout(() => setExpanded(true), 500);
       floorIntervalRef.current = setInterval(() => {
         setShowCategoryFloor(prev => !prev);
       }, 2000);
@@ -363,7 +326,6 @@ export default function HumanLibraryPie() {
   }, [active, studentsData]);
 
   const toggle = (id) => {
-    // Clear existing timers
     Object.values(timersRef.current).forEach(timer => clearTimeout(timer));
     clearTimeout(expandTimerRef.current);
     clearInterval(floorIntervalRef.current);
@@ -376,16 +338,10 @@ export default function HumanLibraryPie() {
 
   const getPosition = (angle, distance) => {
     const rad = (angle * Math.PI) / 180;
-    return {
-      x: Math.cos(rad) * distance,
-      y: Math.sin(rad) * distance
-    };
+    return { x: Math.cos(rad) * distance, y: Math.sin(rad) * distance };
   };
 
   const activeSlice = slices.find(s => s.id === active);
-
-  // Connection status indicator
-  const connectedCount = Object.values(piConnections).filter(conn => conn.connected).length;
 
   return (
     <div style={{
@@ -398,12 +354,8 @@ export default function HumanLibraryPie() {
       background: "#f8f9fa",
       overflow: "hidden"
     }}>
-
-      <div style={{
-        width: 800,
-        height: 800,
-        position: "relative"
-      }}>
+      
+      <div style={{ width: 800, height: 800, position: "relative" }}>
         {slices.map((s) => {
           const isActive = active === s.id;
           const pos = getPosition(s.angle, s.distance);
@@ -521,11 +473,7 @@ export default function HumanLibraryPie() {
                 <img
                   src={s.img}
                   alt={s.label}
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover"
-                  }}
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
                   draggable={false}
                 />
               )}
@@ -540,16 +488,9 @@ export default function HumanLibraryPie() {
             <motion.div
               key="image-placeholder"
               initial={{ opacity: 0, scale: 0 }}
-              animate={{ 
-                opacity: 1, 
-                scale: 1 
-              }}
+              animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0 }}
-              transition={{ 
-                type: "spring", 
-                stiffness: 150, 
-                damping: 22
-              }}
+              transition={{ type: "spring", stiffness: 150, damping: 22 }}
               style={{
                 position: "absolute",
                 left: "26.7%",
@@ -570,11 +511,7 @@ export default function HumanLibraryPie() {
                   key={showCategoryFloor ? 'category' : 'default'}
                   src={showCategoryFloor ? activeSlice.floorplan : "./img/defaultfloor.png"}
                   transition={{ duration: 0.15 }}
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover"
-                  }}
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
                 />
               </AnimatePresence>
             </motion.div>
@@ -589,11 +526,7 @@ export default function HumanLibraryPie() {
                 scale: 1 
               }}
               exit={{ x: -200, opacity: 0, scale: 0 }}
-              transition={{ 
-                type: "spring", 
-                stiffness: 150, 
-                damping: 22
-              }}
+              transition={{ type: "spring", stiffness: 150, damping: 22 }}
               style={{
                 position: "absolute",
                 left: "50%",
