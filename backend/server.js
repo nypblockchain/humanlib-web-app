@@ -1,4 +1,4 @@
-// server.js - Backend server for Firebase to SQL synchronization
+// server.js - Backend server with manual sync only
 const express = require('express');
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
@@ -9,10 +9,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Firebase Admin Configuration - Load from serviceAccountKey.json file
+// Firebase Admin Configuration
 const serviceAccount = require('./serviceAccountKey.json');
 
-// Initialize Firebase Admin (only if not already initialized)
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
@@ -34,6 +33,7 @@ const db_sql = new sqlite3.Database('./humanlib.db', (err) => {
 
 // Create tables if they don't exist
 function initializeDatabase() {
+  // Create students table (unchanged)
   db_sql.run(`
     CREATE TABLE IF NOT EXISTS students (
       id TEXT PRIMARY KEY,
@@ -48,102 +48,34 @@ function initializeDatabase() {
       last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `, (err) => {
-    if (err) {
-      console.error('Error creating students table:', err);
-    } else {
-      console.log('Students table ready');
-    }
+    if (err) console.error('Error creating students table:', err);
   });
 
-  db_sql.run(`
-    CREATE TABLE IF NOT EXISTS sync_status (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      last_sync DATETIME,
-      sync_type TEXT,
-      status TEXT
-    )
-  `, (err) => {
+  // Drop existing sync_status table and create new one
+  db_sql.run('DROP TABLE IF EXISTS sync_status', (err) => {
     if (err) {
-      console.error('Error creating sync_status table:', err);
+      console.error('Error dropping sync_status:', err);
     } else {
-      console.log('Sync status table ready');
+      console.log('Dropped old sync_status table');
     }
-  });
-}
-
-// Track connection status
-let isFirebaseAvailable = true;
-let lastFirebaseCheck = Date.now();
-const FIREBASE_CHECK_INTERVAL = 10000; // Check every 10 seconds
-
-// Check Firebase connectivity
-async function checkFirebaseConnection() {
-  try {
-    // Try to read a document to verify connection
-    await db_firebase.collection('students').limit(1).get();
-    if (!isFirebaseAvailable) {
-      console.log('Firebase connection restored');
-    }
-    isFirebaseAvailable = true;
-    return true;
-  } catch (error) {
-    if (isFirebaseAvailable) {
-      console.error('Firebase connection lost:', error.message);
-    }
-    isFirebaseAvailable = false;
-    return false;
-  }
-}
-
-// Sync Firebase to SQLite
-async function syncFirebaseToSQL() {
-  try {
-    console.log('Starting Firebase to SQLite sync...');
     
-    const snapshot = await db_firebase.collection('students').get();
-    let syncedCount = 0;
-
-    for (const doc of snapshot.docs) {
-      const data = doc.data();
-      
-      const stmt = db_sql.prepare(`
-        INSERT OR REPLACE INTO students 
-        (id, name, avatar, course, year, category, numberOfDays, achievements, shifts, last_updated)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      `);
-
-      stmt.run(
-        doc.id,
-        data.name,
-        data.avatar || '',
-        data.course || '',
-        data.year || '',
-        data.category || '',
-        data.numberOfDays || 1,
-        JSON.stringify(data.achievements || []),
-        JSON.stringify(data.shifts || [])
-      );
-
-      stmt.finalize();
-      syncedCount++;
-    }
-
-    // Record sync status
+    // Create new sync_status table with all columns
     db_sql.run(`
-      INSERT INTO sync_status (last_sync, sync_type, status)
-      VALUES (CURRENT_TIMESTAMP, 'firebase_to_sql', 'success')
-    `);
-
-    console.log(`Synced ${syncedCount} students from Firebase to SQLite`);
-    return syncedCount;
-  } catch (error) {
-    console.error('Error syncing Firebase to SQLite:', error);
-    db_sql.run(`
-      INSERT INTO sync_status (last_sync, sync_type, status)
-      VALUES (CURRENT_TIMESTAMP, 'firebase_to_sql', 'failed')
-    `);
-    throw error;
-  }
+      CREATE TABLE sync_status (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        last_sync DATETIME DEFAULT CURRENT_TIMESTAMP,
+        sync_type TEXT,
+        status TEXT,
+        records_count INTEGER DEFAULT 0
+      )
+    `, (err) => {
+      if (err) {
+        console.error('Error creating sync_status table:', err);
+      } else {
+        console.log('Created new sync_status table with all columns');
+      }
+    });
+  });
 }
 
 // Get students from SQLite
@@ -170,90 +102,90 @@ function getStudentsFromSQL() {
   });
 }
 
-// Sync local-only students to Firebase when connection is restored
-async function syncLocalToFirebase() {
+// Get students from Firebase
+async function getStudentsFromFirebase() {
   try {
-    const students = await getStudentsFromSQL();
-    const localStudents = students.filter(s => s.id.startsWith('local_'));
-    
-    if (localStudents.length === 0) return 0;
+    const snapshot = await db_firebase.collection('students').get();
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+  } catch (error) {
+    console.error('Error fetching from Firebase:', error);
+    throw error;
+  }
+}
 
-    console.log(`Syncing ${localStudents.length} local students to Firebase...`);
+// Sync Firebase to SQLite (manual only)
+async function syncFirebaseToSQL() {
+  try {
+    console.log('Starting manual Firebase to SQLite sync...');
+    
+    const snapshot = await db_firebase.collection('students').get();
     let syncedCount = 0;
 
-    for (const student of localStudents) {
-      try {
-        // Create new document in Firebase
-        const { id, ...studentData } = student;
-        const docRef = await db_firebase.collection('students').add(studentData);
-        
-        // Update local record with Firebase ID
-        db_sql.run(`
-          UPDATE students SET id = ? WHERE id = ?
-        `, [docRef.id, id]);
+    // Clear existing data
+    await new Promise((resolve, reject) => {
+      db_sql.run('DELETE FROM students', (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
 
-        syncedCount++;
-        console.log(`Synced local student ${student.name} to Firebase`);
-      } catch (error) {
-        console.error(`Failed to sync student ${student.name}:`, error.message);
-      }
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      
+      const stmt = db_sql.prepare(`
+        INSERT INTO students 
+        (id, name, avatar, course, year, category, numberOfDays, achievements, shifts, last_updated)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `);
+
+      stmt.run(
+        doc.id,
+        data.name,
+        data.avatar || '',
+        data.course || '',
+        data.year || '',
+        data.category || '',
+        data.numberOfDays || 1,
+        JSON.stringify(data.achievements || []),
+        JSON.stringify(data.shifts || [])
+      );
+
+      stmt.finalize();
+      syncedCount++;
     }
 
+    // Record sync status
+    db_sql.run(`
+      INSERT INTO sync_status (last_sync, sync_type, status, records_count)
+      VALUES (CURRENT_TIMESTAMP, 'firebase_to_sql', 'success', ?)
+    `, [syncedCount]);
+
+    console.log(`Synced ${syncedCount} students from Firebase to SQLite`);
     return syncedCount;
   } catch (error) {
-    console.error('Error syncing local to Firebase:', error);
-    return 0;
+    console.error('Error syncing Firebase to SQLite:', error);
+    db_sql.run(`
+      INSERT INTO sync_status (last_sync, sync_type, status, records_count)
+      VALUES (CURRENT_TIMESTAMP, 'firebase_to_sql', 'failed', 0)
+    `);
+    throw error;
   }
 }
 
 // API ROUTES
 
-// Get all students (auto-detects source)
+// Get students from LOCAL SQL only
 app.get('/api/students', async (req, res) => {
   try {
-    // Check if enough time has passed since last Firebase check
-    if (Date.now() - lastFirebaseCheck > FIREBASE_CHECK_INTERVAL) {
-      await checkFirebaseConnection();
-      lastFirebaseCheck = Date.now();
-    }
-
-    if (isFirebaseAvailable) {
-      try {
-        // Try to sync from Firebase first
-        await syncFirebaseToSQL();
-        
-        // Also sync any local-only records to Firebase
-        await syncLocalToFirebase();
-        
-        // Then read from SQLite
-        const students = await getStudentsFromSQL();
-        
-        res.json({
-          students,
-          source: 'firebase',
-          lastSync: new Date().toISOString()
-        });
-      } catch (error) {
-        console.error('Firebase read failed, falling back to SQLite');
-        isFirebaseAvailable = false;
-        
-        // Fallback to SQLite
-        const students = await getStudentsFromSQL();
-        res.json({
-          students,
-          source: 'sql',
-          note: 'Using cached data from SQLite'
-        });
-      }
-    } else {
-      // Use SQLite directly
-      const students = await getStudentsFromSQL();
-      res.json({
-        students,
-        source: 'sql',
-        note: 'Firebase unavailable, using SQLite cache'
-      });
-    }
+    const students = await getStudentsFromSQL();
+    
+    res.json({
+      students,
+      source: 'sql'
+    });
   } catch (error) {
     console.error('Error fetching students:', error);
     res.status(500).json({ 
@@ -263,84 +195,39 @@ app.get('/api/students', async (req, res) => {
   }
 });
 
-// Add student (writes to both Firebase and SQLite)
+// Get Firebase data for comparison panel
+app.get('/api/students/firebase', async (req, res) => {
+  try {
+    const students = await getStudentsFromFirebase();
+    
+    res.json({
+      students,
+      source: 'firebase'
+    });
+  } catch (error) {
+    console.error('Error fetching Firebase students:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch Firebase students',
+      message: error.message 
+    });
+  }
+});
+
+// Add student - writes to FIREBASE only, local stays unchanged until manual sync
 app.post('/api/students', async (req, res) => {
   try {
     const studentData = req.body;
     
-    // Try Firebase first
-    if (isFirebaseAvailable) {
-      try {
-        const docRef = await db_firebase.collection('students').add(studentData);
-        studentData.id = docRef.id;
-        
-        // Also save to SQLite
-        const stmt = db_sql.prepare(`
-          INSERT INTO students 
-          (id, name, avatar, course, year, category, numberOfDays, achievements, shifts)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-
-        stmt.run(
-          docRef.id,
-          studentData.name,
-          studentData.avatar || '',
-          studentData.course || '',
-          studentData.year || '',
-          studentData.category || '',
-          studentData.numberOfDays || 1,
-          JSON.stringify(studentData.achievements || []),
-          JSON.stringify(studentData.shifts || [])
-        );
-
-        stmt.finalize();
-
-        console.log(`Added student ${studentData.name} to Firebase and SQLite`);
-
-        res.json({ 
-          success: true, 
-          id: docRef.id,
-          source: 'firebase'
-        });
-      } catch (error) {
-        console.error('Firebase write failed, saving to SQLite only');
-        isFirebaseAvailable = false;
-        throw error; // Fall through to SQLite-only save
-      }
-    }
+    // Write to Firebase only
+    const docRef = await db_firebase.collection('students').add(studentData);
     
-    if (!isFirebaseAvailable) {
-      // Save to SQLite only
-      const id = 'local_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-      const stmt = db_sql.prepare(`
-        INSERT INTO students 
-        (id, name, avatar, course, year, category, numberOfDays, achievements, shifts)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
+    console.log(`Added student ${studentData.name} to Firebase only (ID: ${docRef.id})`);
 
-      stmt.run(
-        id,
-        studentData.name,
-        studentData.avatar || '',
-        studentData.course || '',
-        studentData.year || '',
-        studentData.category || '',
-        studentData.numberOfDays || 1,
-        JSON.stringify(studentData.achievements || []),
-        JSON.stringify(studentData.shifts || [])
-      );
-
-      stmt.finalize();
-
-      console.log(`Added student ${studentData.name} to SQLite only (offline)`);
-
-      res.json({ 
-        success: true, 
-        id,
-        source: 'sql',
-        note: 'Saved locally, will sync to Firebase when connection is restored'
-      });
-    }
+    res.json({ 
+      success: true, 
+      id: docRef.id,
+      message: 'Student added to Firebase. Click "Refresh Database" to update local view.'
+    });
   } catch (error) {
     console.error('Error adding student:', error);
     res.status(500).json({ 
@@ -350,48 +237,21 @@ app.post('/api/students', async (req, res) => {
   }
 });
 
-// Update student
+// Update student - writes to FIREBASE only
 app.put('/api/students/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const studentData = req.body;
 
-    // Try Firebase first (only if not a local-only record)
-    if (isFirebaseAvailable && !id.startsWith('local_')) {
-      try {
-        await db_firebase.collection('students').doc(id).update(studentData);
-        console.log(`Updated student in Firebase: ${id}`);
-      } catch (error) {
-        console.error('Firebase update failed:', error.message);
-        isFirebaseAvailable = false;
-      }
-    }
+    // Update Firebase only
+    await db_firebase.collection('students').doc(id).update(studentData);
+    
+    console.log(`Updated student in Firebase: ${id}`);
 
-    // Always update SQLite
-    const stmt = db_sql.prepare(`
-      UPDATE students 
-      SET name=?, avatar=?, course=?, year=?, category=?, 
-          numberOfDays=?, achievements=?, shifts=?, last_updated=CURRENT_TIMESTAMP
-      WHERE id=?
-    `);
-
-    stmt.run(
-      studentData.name,
-      studentData.avatar || '',
-      studentData.course || '',
-      studentData.year || '',
-      studentData.category || '',
-      studentData.numberOfDays || 1,
-      JSON.stringify(studentData.achievements || []),
-      JSON.stringify(studentData.shifts || []),
-      id
-    );
-
-    stmt.finalize();
-
-    console.log(`Updated student in SQLite: ${id}`);
-
-    res.json({ success: true });
+    res.json({ 
+      success: true,
+      message: 'Student updated in Firebase. Click "Refresh Database" to update local view.'
+    });
   } catch (error) {
     console.error('Error updating student:', error);
     res.status(500).json({ 
@@ -401,32 +261,20 @@ app.put('/api/students/:id', async (req, res) => {
   }
 });
 
-// Delete student
+// Delete student - deletes from FIREBASE only
 app.delete('/api/students/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Try Firebase first (only if not a local-only record)
-    if (isFirebaseAvailable && !id.startsWith('local_')) {
-      try {
-        await db_firebase.collection('students').doc(id).delete();
-        console.log(`Deleted student from Firebase: ${id}`);
-      } catch (error) {
-        console.error('Firebase delete failed:', error.message);
-        isFirebaseAvailable = false;
-      }
-    }
+    // Delete from Firebase only
+    await db_firebase.collection('students').doc(id).delete();
+    
+    console.log(`Deleted student from Firebase: ${id}`);
 
-    // Always delete from SQLite
-    db_sql.run('DELETE FROM students WHERE id = ?', [id], (err) => {
-      if (err) {
-        console.error('SQLite delete failed:', err);
-      } else {
-        console.log(`Deleted student from SQLite: ${id}`);
-      }
+    res.json({ 
+      success: true,
+      message: 'Student deleted from Firebase. Click "Refresh Database" to update local view.'
     });
-
-    res.json({ success: true });
   } catch (error) {
     console.error('Error deleting student:', error);
     res.status(500).json({ 
@@ -436,27 +284,16 @@ app.delete('/api/students/:id', async (req, res) => {
   }
 });
 
-// Manual sync endpoint
+// Manual sync endpoint - refreshes local DB from Firebase
 app.post('/api/sync', async (req, res) => {
   try {
-    await checkFirebaseConnection();
+    const count = await syncFirebaseToSQL();
     
-    if (isFirebaseAvailable) {
-      const firebaseToSqlCount = await syncFirebaseToSQL();
-      const localToFirebaseCount = await syncLocalToFirebase();
-      
-      res.json({ 
-        success: true, 
-        message: `Synced ${firebaseToSqlCount} from Firebase, ${localToFirebaseCount} local records to Firebase`,
-        source: 'firebase'
-      });
-    } else {
-      res.json({ 
-        success: false, 
-        message: 'Firebase not available - check your connection',
-        source: 'sql'
-      });
-    }
+    res.json({ 
+      success: true, 
+      message: `Successfully synced ${count} students from Firebase to local database`,
+      count
+    });
   } catch (error) {
     res.status(500).json({ 
       error: 'Sync failed',
@@ -465,64 +302,72 @@ app.post('/api/sync', async (req, res) => {
   }
 });
 
+// Get last sync info
+app.get('/api/sync/status', async (req, res) => {
+  try {
+    db_sql.get(
+      'SELECT * FROM sync_status ORDER BY last_sync DESC LIMIT 1',
+      [],
+      (err, row) => {
+        if (err) {
+          res.status(500).json({ error: err.message });
+        } else {
+          res.json(row || { message: 'No sync history' });
+        }
+      }
+    );
+  } catch (error) {
+    res.status(500).json({ 
+      error: 'Failed to get sync status',
+      message: error.message 
+    });
+  }
+});
+
 // Health check
 app.get('/api/health', async (req, res) => {
-  await checkFirebaseConnection();
-  
-  const localStudents = await getStudentsFromSQL();
-  const pendingSync = localStudents.filter(s => s.id.startsWith('local_')).length;
-  
-  res.json({
-    status: 'ok',
-    firebase: isFirebaseAvailable ? 'connected' : 'disconnected',
-    database: 'sqlite',
-    pendingSync: pendingSync,
-    timestamp: new Date().toISOString()
-  });
+  try {
+    const localStudents = await getStudentsFromSQL();
+    
+    // Try to check Firebase
+    let firebaseStatus = 'unknown';
+    let firebaseCount = 0;
+    try {
+      const firebaseStudents = await getStudentsFromFirebase();
+      firebaseStatus = 'connected';
+      firebaseCount = firebaseStudents.length;
+    } catch (error) {
+      firebaseStatus = 'disconnected';
+    }
+    
+    res.json({
+      status: 'ok',
+      firebase: firebaseStatus,
+      database: 'sqlite',
+      localCount: localStudents.length,
+      firebaseCount: firebaseCount,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      message: error.message
+    });
+  }
 });
 
 // Start server
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log('-----------------------------------------------');
-  console.log('Human Library Server Started');
+  console.log('Human Library Server Started (Manual Sync Mode)');
   console.log('-----------------------------------------------');
   console.log(`Server running at http://localhost:${PORT}`);
-  console.log(`Database: SQLite + Firebase Firestore`);
-  console.log(`Auto-sync interval: 30 seconds`);
+  console.log(`Database: SQLite (local) + Firebase (remote)`);
+  console.log(`Mode: Write to Firebase, Read from SQLite`);
+  console.log(`Sync: Manual only via admin panel`);
   console.log('-----------------------------------------------');
-  
-  // Initial Firebase check and sync
-  checkFirebaseConnection().then(async (available) => {
-    if (available) {
-      console.log('Firebase connected, performing initial sync...');
-      const count = await syncFirebaseToSQL();
-      const localCount = await syncLocalToFirebase();
-      console.log(`Initial sync complete: ${count} students from Firebase`);
-      if (localCount > 0) {
-        console.log(`Synced ${localCount} local records to Firebase`);
-      }
-    } else {
-      console.log('Firebase unavailable, using SQLite only mode');
-      console.log('Data will sync automatically when connection returns');
-    }
-  });
 });
-
-// Periodic Firebase check and sync (every 30 seconds if Firebase is available)
-setInterval(async () => {
-  if (isFirebaseAvailable) {
-    try {
-      await syncFirebaseToSQL();
-      await syncLocalToFirebase();
-    } catch (error) {
-      console.error('Periodic sync failed:', error.message);
-    }
-  } else {
-    // Periodically try to reconnect
-    await checkFirebaseConnection();
-  }
-}, 30000);
 
 // Graceful shutdown
 process.on('SIGINT', () => {

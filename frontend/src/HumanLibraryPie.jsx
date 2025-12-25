@@ -1,3 +1,4 @@
+// HumanLibraryPie.jsx
 import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -22,11 +23,11 @@ export default function HumanLibraryPie() {
   const autoCloseTimerRef = useRef(null); // 10-second auto-close timer
 
   const PI_CONNECTIONS = [
-    { ip: '172.20.10.4', port: 8765, category: 'courses' },
-    { ip: '192.168.10.127', port: 8766, category: 'internships' },
-    { ip: '172.20.10.0', port: 8769, category: 'overseas' },
-    { ip: '192.168.10.129', port: 8768, category: 'professional' },
-    { ip: '172.20.10.2', port: 8769, category: 'alumni' }
+    { ip: '192.168.8.3', port: 8765, category: 'internships' }, //red
+    { ip: '192.168.8.4', port: 8766, category: 'overseas' }, //green
+    { ip: '192.168.8.5', port: 8767, category: 'courses' }, //blue
+    { ip: '192.168.8.6', port: 8768, category: 'alumni' }, //yellow
+    { ip: '192.168.8.7', port: 8769, category: 'professional' } //white
   ];
 
   // Helper function to clear all active operations
@@ -568,14 +569,6 @@ export default function HumanLibraryPie() {
                 overflow: "hidden"
               }}
             >
-              <AnimatePresence mode="wait">
-                <motion.img 
-                  key={showCategoryFloor ? 'category' : 'default'}
-                  src={showCategoryFloor ? activeSlice.floorplan : "./img/defaultfloor.png"}
-                  transition={{ duration: 0.15 }}
-                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                />
-              </AnimatePresence>
             </motion.div>
 
             <motion.div
