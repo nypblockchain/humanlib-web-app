@@ -28,7 +28,6 @@ export default function AdminPanel() {
   const [isEditing, setIsEditing] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [showForm, setShowForm] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
   const [activePanel, setActivePanel] = useState('local'); // 'local' or 'firebase'
@@ -165,22 +164,6 @@ export default function AdminPanel() {
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
-  };
-
-  const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    setUploading(true);
-    try {
-      const storageRef = ref(storage, `avatars/${Date.now()}_${file.name}`);
-      await uploadBytes(storageRef, file);
-      const downloadURL = await getDownloadURL(storageRef);
-      setFormData(prev => ({ ...prev, avatar: downloadURL }));
-    } catch (error) {
-      alert('Error uploading file: ' + error.message);
-    }
-    setUploading(false);
   };
 
   const handleSubmit = async () => {
@@ -485,7 +468,7 @@ export default function AdminPanel() {
               </select>
             </div>
 
-            <div>
+            <div style={{ gridColumn: '1 / -1' }}>
               <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500, fontSize: '14px', color: '#475569' }}>Avatar URL</label>
               <input
                 type="text"
@@ -495,18 +478,9 @@ export default function AdminPanel() {
                 placeholder="https://example.com/image.jpg"
                 style={{ width: '100%', padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box' }}
               />
-            </div>
-
-            <div>
-              <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500, fontSize: '14px', color: '#475569' }}>Or Upload File</label>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleFileUpload}
-                disabled={uploading}
-                style={{ width: '100%', padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box' }}
-              />
-              {uploading && <span style={{ fontSize: '12px', color: '#3b82f6', marginTop: '4px', display: 'block' }}>Uploading...</span>}
+              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
+                Enter a direct image URL (e.g., from Google Drive, Imgur, etc.)
+              </div>
             </div>
 
             <div>
