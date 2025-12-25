@@ -18,6 +18,8 @@ export default function HumanLibraryPie() {
   const expandTimerRef = useRef(null);
   const floorIntervalRef = useRef(null);
   const socketsRef = useRef({});
+  const activeOperationRef = useRef(null); // Track current active operation
+  const autoCloseTimerRef = useRef(null); // 10-second auto-close timer
 
   const PI_CONNECTIONS = [
     { ip: '172.20.10.4', port: 8765, category: 'courses' },
@@ -26,6 +28,64 @@ export default function HumanLibraryPie() {
     { ip: '192.168.10.129', port: 8768, category: 'professional' },
     { ip: '172.20.10.2', port: 8769, category: 'alumni' }
   ];
+
+  // Helper function to clear all active operations
+  const clearAllOperations = () => {
+    // Clear all timers
+    Object.values(timersRef.current).forEach(timer => clearTimeout(timer));
+    clearTimeout(expandTimerRef.current);
+    clearInterval(floorIntervalRef.current);
+    clearTimeout(autoCloseTimerRef.current);
+    
+    // Reset states
+    timersRef.current = {};
+  };
+
+  // Helper function to start auto-close timer (10 seconds)
+  const startAutoCloseTimer = (category) => {
+    clearTimeout(autoCloseTimerRef.current);
+    
+    autoCloseTimerRef.current = setTimeout(() => {
+      console.log(`[Auto-close] ${category} operation timed out after 10 seconds`);
+      activeOperationRef.current = null;
+      setActive(null);
+      setExpanded(false);
+      setSelectedStudent(null);
+      setShowCategoryFloor(false);
+    }, 10000); // 10 seconds
+  };
+
+  // Helper function to handle new button press
+  const handleNewOperation = (category) => {
+    console.log(`[Queue] New operation: ${category}`);
+    
+    // If there's an active operation, interrupt it
+    if (activeOperationRef.current && activeOperationRef.current !== category) {
+      console.log(`[Queue] Interrupting ${activeOperationRef.current} for ${category}`);
+      clearAllOperations();
+    }
+    
+    // Set new active operation
+    activeOperationRef.current = category;
+    
+    // Start the new operation
+    setActive(category);
+    setExpanded(false);
+    setSelectedStudent(null);
+    setShowCategoryFloor(false);
+    
+    // Start 10-second auto-close timer
+    startAutoCloseTimer(category);
+    
+    // Set expansion timer
+    timersRef.current[category] = setTimeout(() => {
+      setActive(null);
+      setExpanded(false);
+      setSelectedStudent(null);
+      setShowCategoryFloor(false);
+      activeOperationRef.current = null;
+    }, 30000);
+  };
 
   const baseSlices = [
     { 
@@ -162,31 +222,21 @@ export default function HumanLibraryPie() {
               const expectedButton = `${category}_button`;
               if (data.button === expectedButton) {
                 if (data.status === "ON") {
-                  Object.values(timersRef.current).forEach(timer => clearTimeout(timer));
-                  clearTimeout(expandTimerRef.current);
-                  clearInterval(floorIntervalRef.current);
+                  // Handle new button press with queue system
+                  handleNewOperation(category);
                   
-                  setActive(category);
-                  setExpanded(false);
-                  setSelectedStudent(null);
-                  setShowCategoryFloor(false);
-                  
-                  timersRef.current[category] = setTimeout(() => {
+                } else if (data.status === "OFF") {
+                  // Only clear if this is the active operation
+                  if (activeOperationRef.current === category) {
+                    console.log(`[Queue] ${category} button turned OFF`);
+                    clearAllOperations();
+                    activeOperationRef.current = null;
+                    
                     setActive(null);
                     setExpanded(false);
                     setSelectedStudent(null);
                     setShowCategoryFloor(false);
-                  }, 30000);
-                  
-                } else if (data.status === "OFF") {
-                  Object.values(timersRef.current).forEach(timer => clearTimeout(timer));
-                  clearTimeout(expandTimerRef.current);
-                  clearInterval(floorIntervalRef.current);
-                  
-                  setActive(null);
-                  setExpanded(false);
-                  setSelectedStudent(null);
-                  setShowCategoryFloor(false);
+                  }
                 }
               }
             } catch (error) {
@@ -227,6 +277,7 @@ export default function HumanLibraryPie() {
       cleanupFunctions.forEach(cleanup => cleanup());
       clearTimeout(expandTimerRef.current);
       clearInterval(floorIntervalRef.current);
+      clearTimeout(autoCloseTimerRef.current);
     };
   }, []);
 
@@ -280,14 +331,20 @@ export default function HumanLibraryPie() {
       
       if (keyMap[e.key]) {
         const category = keyMap[e.key];
-        Object.values(timersRef.current).forEach(timer => clearTimeout(timer));
-        clearTimeout(expandTimerRef.current);
-        clearInterval(floorIntervalRef.current);
         
-        setActive(prev => prev === category ? null : category);
-        setExpanded(false);
-        setSelectedStudent(null);
-        setShowCategoryFloor(false);
+        // If pressing the same key, turn it off
+        if (activeOperationRef.current === category) {
+          console.log(`[Keyboard] Turning OFF ${category}`);
+          clearAllOperations();
+          activeOperationRef.current = null;
+          setActive(null);
+          setExpanded(false);
+          setSelectedStudent(null);
+          setShowCategoryFloor(false);
+        } else {
+          // New operation via keyboard
+          handleNewOperation(category);
+        }
       }
     };
     
@@ -326,14 +383,19 @@ export default function HumanLibraryPie() {
   }, [active, studentsData]);
 
   const toggle = (id) => {
-    Object.values(timersRef.current).forEach(timer => clearTimeout(timer));
-    clearTimeout(expandTimerRef.current);
-    clearInterval(floorIntervalRef.current);
-    
-    setActive(active === id ? null : id);
-    setExpanded(false);
-    setSelectedStudent(null);
-    setShowCategoryFloor(false);
+    // If clicking the same category, turn it off
+    if (activeOperationRef.current === id) {
+      console.log(`[Click] Turning OFF ${id}`);
+      clearAllOperations();
+      activeOperationRef.current = null;
+      setActive(null);
+      setExpanded(false);
+      setSelectedStudent(null);
+      setShowCategoryFloor(false);
+    } else {
+      // New operation via click
+      handleNewOperation(id);
+    }
   };
 
   const getPosition = (angle, distance) => {
