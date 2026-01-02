@@ -73,7 +73,7 @@ export default function AdminPanel() {
   const years = ['PFP', 'Year 1', 'Year 2', 'Year 3'];
 
   const dateOptions = [
-    { value: '17/12/2025', label: '8 January' },
+    { value: '02/01/2026', label: '2 January' },
     { value: '09/01/2026', label: '9 January' },
     { value: '10/01/2026', label: '10 January' }
   ];
