@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot } from 'firebase/firestore';
-import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 // Firebase configuration
 const firebaseConfig = {
@@ -20,7 +19,6 @@ const API_BASE_URL = 'http://localhost:3001/api';
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-const storage = getStorage(app);
 
 export default function AdminPanel() {
   const [localStudents, setLocalStudents] = useState([]);
@@ -64,27 +62,31 @@ export default function AdminPanel() {
   const courses = [
     'Applied AI & Analytics',
     'Business & Financial Technology',
-    'Cybersecurity & Digital Forensics',
-    'Information Technology',
     'Common Business & Technology Programme',
-    'Common ICT Programme'
+    'Common ICT Programme',
+    'Cybersecurity & Digital Forensics',
+    'Engineering Informatics',
+    'Infocomm & Security',
+    'Information Technology'
   ];
 
-  const years = ['PFP', 'Year 1', 'Year 2', 'Year 3'];
+  const years = ['PFP', 'Year 1', 'Year 2', 'Year 3', 'Alumni'];
 
   const dateOptions = [
-    { value: '02/01/2026', label: '2 January' },
+    { value: '07/01/2026', label: '7 January' },
+    { value: '08/01/2026', label: '8 January' },
     { value: '09/01/2026', label: '9 January' },
     { value: '10/01/2026', label: '10 January' }
   ];
 
   const getAvailableDates = (currentDay) => {
-    const selectedDates = [];
-    if (currentDay !== 1 && formData.day1Date) selectedDates.push(formData.day1Date);
-    if (currentDay !== 2 && formData.day2Date) selectedDates.push(formData.day2Date);
-    if (currentDay !== 3 && formData.day3Date) selectedDates.push(formData.day3Date);
+    // const selectedDates = [];
+    // if (currentDay !== 1 && formData.day1Date) selectedDates.push(formData.day1Date);
+    // if (currentDay !== 2 && formData.day2Date) selectedDates.push(formData.day2Date);
+    // if (currentDay !== 3 && formData.day3Date) selectedDates.push(formData.day3Date);
     
-    return dateOptions.filter(option => !selectedDates.includes(option.value));
+    // return dateOptions.filter(option => !selectedDates.includes(option.value));
+    return dateOptions;
   };
 
   const getAvailableEndTimes = (startTime) => {
@@ -93,7 +95,7 @@ export default function AdminPanel() {
     return timeOptions.slice(startIndex + 1);
   };
         
-  // Generate time options (0:00 to 22:30 in 15-minute intervals)
+  // Generate time options (9:30 AM to 10:30 PM in 15-minute intervals)
   const generateTimeOptions = () => {
     const times = [];
     const startHour = 0;
@@ -246,6 +248,47 @@ export default function AdminPanel() {
     }
   };
 
+  const sortStudentsByShiftDateTime = (students) => {
+  return [...students].sort((a, b) => {
+    const getEarliestShift = (student) => {
+      if (!student.shifts || student.shifts.length === 0) {
+        return { date: '31/12/2099', shiftStart: '23:59' }; 
+      }
+      
+      const sortedShifts = [...student.shifts].sort((shiftA, shiftB) => {
+        const [dayA, monthA, yearA] = shiftA.date.split('/');
+        const [dayB, monthB, yearB] = shiftB.date.split('/');
+        
+        const dateA = new Date(yearA, monthA - 1, dayA);
+        const dateB = new Date(yearB, monthB - 1, dayB);
+        
+        if (dateA.getTime() !== dateB.getTime()) {
+          return dateA - dateB;
+        }
+        
+        return shiftA.shiftStart.localeCompare(shiftB.shiftStart);
+      });
+      
+      return sortedShifts[0];
+    };
+
+    const earliestShiftA = getEarliestShift(a);
+    const earliestShiftB = getEarliestShift(b);
+
+    const [dayA, monthA, yearA] = earliestShiftA.date.split('/');
+    const [dayB, monthB, yearB] = earliestShiftB.date.split('/');
+    
+    const dateA = new Date(yearA, monthA - 1, dayA);
+    const dateB = new Date(yearB, monthB - 1, dayB);
+
+    if (dateA.getTime() !== dateB.getTime()) {
+      return dateA - dateB;
+    }
+
+    return earliestShiftA.shiftStart.localeCompare(earliestShiftB.shiftStart);
+  });
+};
+
   const handleEdit = (student) => {
     const numDays = student.numberOfDays || 1;
     const shifts = student.shifts || [];
@@ -259,13 +302,13 @@ export default function AdminPanel() {
       achievement2: student.achievements?.[1] || '',
       achievement3: student.achievements?.[2] || '',
       numberOfDays: numDays.toString(),
-      day1Date: shifts[0]?.date || '',
+      day1Date: shifts[0]?.date || '06/01/2026',
       day1Start: shifts[0]?.shiftStart || '',
       day1End: shifts[0]?.shiftEnd || '',
-      day2Date: shifts[1]?.date || '',
+      day2Date: shifts[1]?.date || '08/01/2026',
       day2Start: shifts[1]?.shiftStart || '',
       day2End: shifts[1]?.shiftEnd || '',
-      day3Date: shifts[2]?.date || '',
+      day3Date: shifts[2]?.date || '09/01/2026',
       day3Start: shifts[2]?.shiftStart || '',
       day3End: shifts[2]?.shiftEnd || '',
       category: student.category
@@ -273,6 +316,11 @@ export default function AdminPanel() {
     setEditingId(student.id);
     setIsEditing(true);
     setShowForm(true);
+
+    window.scrollTo({
+    top: 0,
+    behavior: 'smooth' 
+    });
   };
 
   const handleDelete = async (id) => {
@@ -332,13 +380,13 @@ export default function AdminPanel() {
       achievement2: '',
       achievement3: '',
       numberOfDays: '1',
-      day1Date: '',
+      day1Date: '08/01/2026',
       day1Start: '',
       day1End: '',
-      day2Date: '',
+      day2Date: '09/01/2026',
       day2Start: '',
       day2End: '',
-      day3Date: '',
+      day3Date: '10/01/2026',
       day3Start: '',
       day3End: '',
       category: 'internships'
@@ -350,7 +398,22 @@ export default function AdminPanel() {
 
   const formatShiftsDisplay = (shifts) => {
     if (!shifts || shifts.length === 0) return 'No shifts';
-    return shifts.map((shift, idx) => (
+
+    const sortedShifts = [...shifts].sort((a, b) => {
+      const [dayA, monthA, yearA] = a.date.split('/');
+      const [dayB, monthB, yearB] = b.date.split('/');
+      
+      const dateA = new Date(yearA, monthA - 1, dayA);
+      const dateB = new Date(yearB, monthB - 1, dayB);
+      
+      if (dateA.getTime() !== dateB.getTime()) {
+        return dateA - dateB;
+      }
+      
+      return a.shiftStart.localeCompare(b.shiftStart);
+    });
+    
+    return sortedShifts.map((shift, idx) => (
       <div key={idx} style={{ marginBottom: '4px' }}>
         <div style={{ fontWeight: 500 }}>{shift.date}</div>
         <div style={{ color: '#64748b', fontSize: '12px' }}>
@@ -361,7 +424,7 @@ export default function AdminPanel() {
   };
 
   const numDays = parseInt(formData.numberOfDays);
-  const displayStudents = activePanel === 'local' ? localStudents : firebaseStudents;
+  const displayStudents = activePanel === 'local' ? sortStudentsByShiftDateTime(localStudents) : sortStudentsByShiftDateTime(firebaseStudents);
 
   return (
     <div style={{ padding: '20px', maxWidth: '1600px', margin: '0 auto', fontFamily: 'system-ui, -apple-system, sans-serif', background: '#ffffff', minHeight: '100vh' }}>
@@ -468,7 +531,7 @@ export default function AdminPanel() {
               </select>
             </div>
 
-            <div style={{ gridColumn: '1 / -1' }}>
+            <div>
               <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500, fontSize: '14px', color: '#475569' }}>Avatar URL</label>
               <input
                 type="text"
@@ -478,11 +541,7 @@ export default function AdminPanel() {
                 placeholder="https://example.com/image.jpg"
                 style={{ width: '100%', padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box' }}
               />
-              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
-                Enter a direct image URL (e.g., from Google Drive, Imgur, etc.)
-              </div>
             </div>
-
             <div>
               <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500, fontSize: '14px', color: '#475569' }}>Course *</label>
               <select

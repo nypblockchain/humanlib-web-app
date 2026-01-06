@@ -1,4 +1,3 @@
-// HumanLibraryPie.jsx
 import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -15,90 +14,15 @@ export default function HumanLibraryPie() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [dataSource, setDataSource] = useState('checking...');
   
-  const timersRef = useRef({});
-  const expandTimerRef = useRef(null);
-  const floorIntervalRef = useRef(null);
-  const socketsRef = useRef({});
-  const activeOperationRef = useRef(null); // Track current active operation
-  const autoCloseTimerRef = useRef(null); // 10-second auto-close timer
+  const [categoryStates, setCategoryStates] = useState({
+    internships: false,
+    overseas: false,
+    courses: false,
+    alumni: false,
+    professional: false
+  });
 
-  const PI_CONNECTIONS = [
-    { ip: '192.168.8.3', port: 8765, category: 'internships' }, //red
-    { ip: '192.168.8.4', port: 8766, category: 'overseas' }, //green
-    { ip: '192.168.8.5', port: 8767, category: 'courses' }, //blue
-    { ip: '192.168.8.6', port: 8768, category: 'alumni' }, //yellow
-    { ip: '192.168.8.7', port: 8769, category: 'professional' } //white
-  ];
-
-  // Helper function to clear all active operations
-  const clearAllOperations = () => {
-    // Clear all timers
-    Object.values(timersRef.current).forEach(timer => clearTimeout(timer));
-    clearTimeout(expandTimerRef.current);
-    clearInterval(floorIntervalRef.current);
-    clearTimeout(autoCloseTimerRef.current);
-    
-    // Reset states
-    timersRef.current = {};
-  };
-
-  // Helper function to start auto-close timer (10 seconds)
-  const startAutoCloseTimer = (category) => {
-    clearTimeout(autoCloseTimerRef.current);
-    
-    autoCloseTimerRef.current = setTimeout(() => {
-      console.log(`[Auto-close] ${category} operation timed out after 10 seconds`);
-      activeOperationRef.current = null;
-      setActive(null);
-      setExpanded(false);
-      setSelectedStudent(null);
-      setShowCategoryFloor(false);
-    }, 10000); // 10 seconds
-  };
-
-  // Helper function to handle new button press
-  const handleNewOperation = (category) => {
-    console.log(`[Queue] New operation: ${category}`);
-    
-    // If there's an active operation, interrupt it
-    if (activeOperationRef.current && activeOperationRef.current !== category) {
-      console.log(`[Queue] Interrupting ${activeOperationRef.current} for ${category}`);
-      clearAllOperations();
-    }
-    
-    // Set new active operation
-    activeOperationRef.current = category;
-    
-    // Start the new operation
-    setActive(category);
-    setExpanded(false);
-    setSelectedStudent(null);
-    setShowCategoryFloor(false);
-    
-    // Start 10-second auto-close timer
-    startAutoCloseTimer(category);
-    
-    // Set expansion timer
-    timersRef.current[category] = setTimeout(() => {
-      setActive(null);
-      setExpanded(false);
-      setSelectedStudent(null);
-      setShowCategoryFloor(false);
-      activeOperationRef.current = null;
-    }, 30000);
-  };
-
-  const baseSlices = [
-    { 
-      id: "text", 
-      label: "The Inside Scoop", 
-      img: "/img/text.png", 
-      floorplan: "./img/defaultfloor.png",
-      color: "#ffffff27", 
-      angle: 0, 
-      distance: 0,
-      description: "Made by Jingda TEEHEE"
-    },
+  const baseSlices = useMemo(() => [
     { 
       id: "internships", 
       label: "Internships", 
@@ -149,15 +73,136 @@ export default function HumanLibraryPie() {
       distance: 300,
       description: "The School of Information Technology (IT) at Nanyang Polytechnic (NYP) offers a wide range of cutting-edge courses designed to equip students with the essential skills and knowledge to thrive in the fast-evolving digital world."
     }
+  ], []);
+  
+  const expandTimerRef = useRef(null);
+  const floorIntervalRef = useRef(null);
+  const socketsRef = useRef({});
+  const lastActionTimeRef = useRef(0);
+  const DEBOUNCE_DELAY = 300;
+  const isTransitioningRef = useRef(false);
+  const lastWebSocketMessageRef = useRef({});
+  const WS_COOLDOWN = 250;
+  const autoReturnTimerRef = useRef(null);
+  const AUTO_RETURN_DELAY = 10000;
+
+  const PI_CONNECTIONS = [
+    { ip: '192.168.8.3', port: 8765, category: 'internships' },
+    { ip: '192.168.8.4', port: 8766, category: 'overseas' },
+    { ip: '192.168.8.5', port: 8767, category: 'courses' },
+    { ip: '192.168.8.6', port: 8768, category: 'alumni' },
+    { ip: '192.168.8.7', port: 8769, category: 'professional' }
   ];
+
+  const resetAutoReturnTimer = () => {
+    if (autoReturnTimerRef.current) {
+      clearTimeout(autoReturnTimerRef.current);
+      autoReturnTimerRef.current = null;
+    }
+    
+    if (active && active !== 'text') {
+      autoReturnTimerRef.current = setTimeout(() => {
+        console.log(`[AUTO-RETURN] Returning to home after ${AUTO_RETURN_DELAY/1000}s of inactivity`);
+        deactivateAll();
+      }, AUTO_RETURN_DELAY);
+    }
+  };
+
+  const clearAllTimers = () => {
+    if (expandTimerRef.current) {
+      clearTimeout(expandTimerRef.current);
+      expandTimerRef.current = null;
+    }
+    if (floorIntervalRef.current) {
+      clearInterval(floorIntervalRef.current);
+      floorIntervalRef.current = null;
+    }
+    if (autoReturnTimerRef.current) {
+      clearTimeout(autoReturnTimerRef.current);
+      autoReturnTimerRef.current = null;
+    }
+  };
+
+  const activateCategory = (category) => {
+    const now = Date.now();
+    
+    if (now - lastActionTimeRef.current < DEBOUNCE_DELAY) {
+      console.log(`[BLOCKED] Debounce protection: ${category}`);
+      return;
+    }
+    
+    if (isTransitioningRef.current) {
+      console.log(`[BLOCKED] Transition in progress: ${category}`);
+      return;
+    }
+    
+    console.log(`[Activate] ${category}`);
+    lastActionTimeRef.current = now;
+    isTransitioningRef.current = true;
+    clearAllTimers();
+    
+    setActive(category === 'text' ? null : category);
+    setCategoryStates(prev => ({
+      ...Object.keys(prev).reduce((acc, key) => ({ ...acc, [key]: false }), {}),
+      ...(category !== 'text' ? { [category]: true } : {})
+    }));
+    setExpanded(false);
+    setSelectedStudent(null);
+    setShowCategoryFloor(false);
+    
+    if (category !== 'text') {
+      autoReturnTimerRef.current = setTimeout(() => {
+        console.log(`[AUTO-RETURN] Returning to home after ${AUTO_RETURN_DELAY/1000}s`);
+        deactivateAll();
+      }, AUTO_RETURN_DELAY);
+    }
+    
+    setTimeout(() => {
+      isTransitioningRef.current = false;
+    }, 600);
+  };
+
+  const deactivateAll = () => {
+    const now = Date.now();
+    
+    if (now - lastActionTimeRef.current < DEBOUNCE_DELAY) {
+      console.log(`[BLOCKED] Debounce protection: deactivate`);
+      return;
+    }
+    
+    if (isTransitioningRef.current) {
+      console.log(`[BLOCKED] Transition in progress: deactivate`);
+      return;
+    }
+    
+    console.log(`[Deactivate] All categories`);
+    lastActionTimeRef.current = now;
+    isTransitioningRef.current = true;
+    clearAllTimers();
+    
+    setCategoryStates({
+      internships: false,
+      overseas: false,
+      courses: false,
+      alumni: false,
+      professional: false
+    });
+    
+    setActive(null);
+    setExpanded(false);
+    setSelectedStudent(null);
+    setShowCategoryFloor(false);
+    
+    setTimeout(() => {
+      isTransitioningRef.current = false;
+    }, 600);
+  };
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
-
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
@@ -169,7 +214,6 @@ export default function HumanLibraryPie() {
       try {
         const response = await fetch(`${API_BASE_URL}/students`);
         const data = await response.json();
-        
         setStudentsData(data.students || []);
         setDataSource(data.source || 'unknown');
       } catch (error) {
@@ -177,25 +221,25 @@ export default function HumanLibraryPie() {
         setDataSource('error');
       }
     };
-
-    // Initial fetch
     fetchStudents();
-
-    // Poll every 5 seconds to get updates
     const interval = setInterval(fetchStudents, 5000);
-
     return () => clearInterval(interval);
   }, []);
 
-  // Multi-Pi WebSocket connections
   useEffect(() => {
     const connectToPi = ({ ip, port, category }) => {
       let socket;
       let reconnectTimeout;
       let connectionAttempts = 0;
       const maxConnectionAttempts = 10;
+      let shouldReconnect = true;
 
       const connect = () => {
+        if (!shouldReconnect) {
+          console.log(`[${category}] Reconnection aborted (cleanup triggered)`);
+          return;
+        }
+        
         connectionAttempts++;
         
         try {
@@ -222,22 +266,20 @@ export default function HumanLibraryPie() {
               
               const expectedButton = `${category}_button`;
               if (data.button === expectedButton) {
+                const now = Date.now();
+                const lastMessage = lastWebSocketMessageRef.current[category] || 0;
+                
+                if (now - lastMessage < WS_COOLDOWN) {
+                  console.log(`[WS BLOCKED] Rate limit: ${category}`);
+                  return;
+                }
+                
+                lastWebSocketMessageRef.current[category] = now;
+                
                 if (data.status === "ON") {
-                  // Handle new button press with queue system
-                  handleNewOperation(category);
-                  
+                  activateCategory(category);
                 } else if (data.status === "OFF") {
-                  // Only clear if this is the active operation
-                  if (activeOperationRef.current === category) {
-                    console.log(`[Queue] ${category} button turned OFF`);
-                    clearAllOperations();
-                    activeOperationRef.current = null;
-                    
-                    setActive(null);
-                    setExpanded(false);
-                    setSelectedStudent(null);
-                    setShowCategoryFloor(false);
-                  }
+                  deactivateAll();
                 }
               }
             } catch (error) {
@@ -251,10 +293,14 @@ export default function HumanLibraryPie() {
               [category]: { connected: false, ip, port }
             }));
             
-            if (connectionAttempts < maxConnectionAttempts) {
+            if (shouldReconnect && connectionAttempts < maxConnectionAttempts) {
               const delay = Math.min(1000 * Math.pow(2, connectionAttempts), 30000);
               reconnectTimeout = setTimeout(connect, delay);
             }
+          };
+
+          socket.onerror = (error) => {
+            console.error(`[${category}] Socket error:`, error);
           };
 
           socketsRef.current[category] = socket;
@@ -266,9 +312,11 @@ export default function HumanLibraryPie() {
       connect();
 
       return () => {
-        if (socket) socket.close(1000, "Component unmounting");
+        shouldReconnect = false;
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.close(1000, "Component unmounting");
+        }
         clearTimeout(reconnectTimeout);
-        if (timersRef.current[category]) clearTimeout(timersRef.current[category]);
       };
     };
 
@@ -276,9 +324,12 @@ export default function HumanLibraryPie() {
 
     return () => {
       cleanupFunctions.forEach(cleanup => cleanup());
-      clearTimeout(expandTimerRef.current);
-      clearInterval(floorIntervalRef.current);
-      clearTimeout(autoCloseTimerRef.current);
+      clearAllTimers();
+      Object.values(socketsRef.current).forEach(socket => {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.close(1000, "Cleanup");
+        }
+      });
     };
   }, []);
 
@@ -294,26 +345,20 @@ export default function HumanLibraryPie() {
           achievements: student.achievements || [],
           shifts: student.shifts || []
         }));
-
       return { ...slice, students: categoryStudents };
     });
-  }, [studentsData]);
+  }, [studentsData, baseSlices]);
 
   const isStudentAvailable = (student) => {
     if (!student.shifts || student.shifts.length === 0) return true;
-    
     const now = new Date();
-    
     return student.shifts.some(shift => {
       if (!shift.date || !shift.shiftStart || !shift.shiftEnd) return false;
-      
       const [day, month, year] = shift.date.split('/');
       const [startHour, startMin] = shift.shiftStart.split(':');
       const [endHour, endMin] = shift.shiftEnd.split(':');
-      
       const shiftStart = new Date(year, month - 1, day, startHour, startMin);
       const shiftEnd = new Date(year, month - 1, day, endHour, endMin);
-      
       return now >= shiftStart && now <= shiftEnd;
     });
   };
@@ -325,77 +370,60 @@ export default function HumanLibraryPie() {
 
   useEffect(() => {
     const handleKeyPress = (e) => {
+      if (e.repeat) return;
       const keyMap = {
         '1': 'internships', '2': 'overseas', '3': 'professional',
         '4': 'alumni', '5': 'courses', '6': 'text'
       };
-      
       if (keyMap[e.key]) {
         const category = keyMap[e.key];
-        
-        // If pressing the same key, turn it off
-        if (activeOperationRef.current === category) {
-          console.log(`[Keyboard] Turning OFF ${category}`);
-          clearAllOperations();
-          activeOperationRef.current = null;
-          setActive(null);
-          setExpanded(false);
-          setSelectedStudent(null);
-          setShowCategoryFloor(false);
+        if (category === 'text' || !categoryStates[category]) {
+          activateCategory(category);
         } else {
-          // New operation via keyboard
-          handleNewOperation(category);
+          deactivateAll();
         }
+        resetAutoReturnTimer();
       }
     };
-    
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, []);
+  }, [categoryStates, active]);
 
   useEffect(() => {
-    clearTimeout(expandTimerRef.current);
-    clearInterval(floorIntervalRef.current);
-    
+    clearAllTimers();
     if (active) {
       const activeSliceData = slices.find(s => s.id === active);
       if (!activeSliceData) return;
-      
-      const availableStudents = activeSliceData.students.filter(isStudentAvailable);
+      const students = activeSliceData.students || [];
+      const availableStudents = students.filter(isStudentAvailable);
       const randomStudent = availableStudents.length > 0 
         ? availableStudents[Math.floor(Math.random() * availableStudents.length)]
         : null;
       setSelectedStudent(randomStudent);
-      
       expandTimerRef.current = setTimeout(() => setExpanded(true), 500);
       floorIntervalRef.current = setInterval(() => {
         setShowCategoryFloor(prev => !prev);
       }, 2000);
-      
-      return () => {
-        clearTimeout(expandTimerRef.current);
-        clearInterval(floorIntervalRef.current);
-      };
+      if (active !== 'text') {
+        autoReturnTimerRef.current = setTimeout(() => {
+          console.log(`[AUTO-RETURN] Returning to home after ${AUTO_RETURN_DELAY/1000}s`);
+          deactivateAll();
+        }, AUTO_RETURN_DELAY);
+      }
     } else {
       setExpanded(false);
       setSelectedStudent(null);
       setShowCategoryFloor(false);
     }
+    return () => clearAllTimers();
   }, [active, studentsData]);
 
   const toggle = (id) => {
-    // If clicking the same category, turn it off
-    if (activeOperationRef.current === id) {
-      console.log(`[Click] Turning OFF ${id}`);
-      clearAllOperations();
-      activeOperationRef.current = null;
-      setActive(null);
-      setExpanded(false);
-      setSelectedStudent(null);
-      setShowCategoryFloor(false);
+    resetAutoReturnTimer();
+    if (id === 'text' || !categoryStates[id]) {
+      activateCategory(id);
     } else {
-      // New operation via click
-      handleNewOperation(id);
+      deactivateAll();
     }
   };
 
@@ -417,6 +445,20 @@ export default function HumanLibraryPie() {
       background: "#f8f9fa",
       overflow: "hidden"
     }}>
+      <h3 style={{
+        position: "absolute",
+        top: "75px",
+        left: "50%",
+        transform: "translateX(-50%)",
+        margin: 0,
+        fontSize: "60px",
+        fontWeight: 700,
+        color: "#1a1a1a",
+        zIndex: 30,
+        textShadow: "2px 2px 4px rgba(0,0,0,0.1)"
+      }}>
+        THE INSIDE SCOOP
+      </h3>
       
       <div style={{ width: 800, height: 800, position: "relative" }}>
         {slices.map((s) => {
@@ -452,11 +494,7 @@ export default function HumanLibraryPie() {
                 translateX: "-50%",
                 translateY: "-50%"
               }}
-              transition={{ 
-                type: "spring", 
-                stiffness: expanded ? 150 : 180, 
-                damping: expanded ? 22 : 20 
-              }}
+              transition={{ type: "spring", stiffness: expanded ? 150 : 180, damping: expanded ? 22 : 20 }}
             >
               {isActive ? (
                 <motion.div
@@ -488,15 +526,7 @@ export default function HumanLibraryPie() {
                     hyphens: "auto",
                     wordBreak: "break-word" 
                   }}>{s.label}</h2>
-
-                  <div style={{
-                    width: 60,
-                    height: 4,
-                    background: "black",
-                    margin: "20px 0",
-                    borderRadius: 2
-                  }} />
-                  
+                  <div style={{ width: 60, height: 4, background: "black", margin: "20px 0", borderRadius: 2 }} />
                   {expanded && (
                     <motion.div
                       initial={{ opacity: 0, y: -20 }}
@@ -517,28 +547,19 @@ export default function HumanLibraryPie() {
                         fontWeight: 700,
                         color: "#1a1a1a",
                         letterSpacing: "-0.5px"
-                      }}>
-                        About
-                      </h3>
+                      }}>About</h3>
                       <p style={{ 
                         fontSize: 15,
                         lineHeight: 1.8,
                         color: "#4a5568",
                         margin: 0,
                         textAlign: "left"
-                      }}>
-                        {s.description}
-                      </p>
+                      }}>{s.description}</p>
                     </motion.div>
                   )}
                 </motion.div>
               ) : (
-                <img
-                  src={s.img}
-                  alt={s.label}
-                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                  draggable={false}
-                />
+                <img src={s.img} alt={s.label} style={{ width: "100%", height: "100%", objectFit: "cover" }} draggable={false} />
               )}
             </motion.div>
           );
@@ -568,18 +589,11 @@ export default function HumanLibraryPie() {
                 justifyContent: "center",
                 overflow: "hidden"
               }}
-            >
-            </motion.div>
-
+            />
             <motion.div
               key="students-panel"
               initial={{ x: -400, opacity: 0, scale: 0 }}
-              animate={{ 
-                x: 305,
-                y: getYOffset(selectedStudent.achievements?.length || 0),
-                opacity: 1, 
-                scale: 1 
-              }}
+              animate={{ x: 305, y: getYOffset(selectedStudent.achievements?.length || 0), opacity: 1, scale: 1 }}
               exit={{ x: -200, opacity: 0, scale: 0 }}
               transition={{ type: "spring", stiffness: 150, damping: 22 }}
               style={{
@@ -597,13 +611,7 @@ export default function HumanLibraryPie() {
                 overflow: "hidden"
               }}
             >
-              <div style={{
-                padding: "35px 30px",
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                gap: "20px"
-              }}>
+              <div style={{ padding: "35px 30px", display: "flex", flexDirection: "column", alignItems: "center", gap: "20px" }}>
                 <motion.img
                   initial={{ scale: 0 }}
                   animate={{ scale: 1 }}
@@ -619,93 +627,48 @@ export default function HumanLibraryPie() {
                     boxShadow: `0 4px 16px ${activeSlice.color}30`
                   }}
                 />
-                
                 <motion.h3 
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.6 }}
-                  style={{ 
-                    margin: 0,
-                    fontSize: 24,
-                    fontWeight: 700,
-                    color: "#1a1a1a",
-                    textAlign: "center"
-                  }}
-                >
-                  {selectedStudent.name}
-                </motion.h3>
-                
+                  style={{ margin: 0, fontSize: 24, fontWeight: 700, color: "#1a1a1a", textAlign: "center" }}
+                >{selectedStudent.name}</motion.h3>
                 <motion.div 
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ delay: 0.7 }}
-                  style={{
-                    width: "100%",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "12px"
-                  }}
+                  style={{ width: "100%", display: "flex", flexDirection: "column", gap: "12px" }}
                 >
                   <motion.div
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: 0.8 }}
-                    style={{
-                      background: `${activeSlice.color}15`,
-                      padding: "12px 16px",
-                      borderRadius: "10px",
-                      border: `1px solid ${activeSlice.color}40`
-                    }}
+                    style={{ background: `${activeSlice.color}15`, padding: "12px 16px", borderRadius: "10px", border: `1px solid ${activeSlice.color}40` }}
                   >
                     <div style={{ fontSize: 12, color: "#666", fontWeight: 600, marginBottom: "4px" }}>COURSE</div>
                     <div style={{ fontSize: 14, color: "#2c3e50", fontWeight: 500 }}>{selectedStudent.course}</div>
                   </motion.div>
-
                   <motion.div
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: 0.85 }}
-                    style={{
-                      background: `${activeSlice.color}15`,
-                      padding: "12px 16px",
-                      borderRadius: "10px",
-                      border: `1px solid ${activeSlice.color}40`
-                    }}
+                    style={{ background: `${activeSlice.color}15`, padding: "12px 16px", borderRadius: "10px", border: `1px solid ${activeSlice.color}40` }}
                   >
                     <div style={{ fontSize: 12, color: "#666", fontWeight: 600, marginBottom: "4px" }}>YEAR</div>
                     <div style={{ fontSize: 14, color: "#2c3e50", fontWeight: 500 }}>{selectedStudent.year}</div>
                   </motion.div>
-
                   {selectedStudent.achievements && selectedStudent.achievements.length > 0 && (
                     <motion.div
                       initial={{ opacity: 0, x: -20 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: 0.9 }}
-                      style={{
-                        background: `${activeSlice.color}15`,
-                        padding: "12px 16px",
-                        borderRadius: "10px",
-                        border: `1px solid ${activeSlice.color}40`
-                      }}
+                      style={{ background: `${activeSlice.color}15`, padding: "12px 16px", borderRadius: "10px", border: `1px solid ${activeSlice.color}40` }}
                     >
                       <div style={{ fontSize: 12, color: "#666", fontWeight: 600, marginBottom: "8px" }}>ACHIEVEMENTS</div>
                       <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                         {selectedStudent.achievements.map((achievement, idx) => (
-                          <div 
-                            key={idx}
-                            style={{ 
-                              fontSize: 13, 
-                              color: "#2c3e50",
-                              paddingLeft: "12px",
-                              position: "relative"
-                            }}
-                          >
-                            <span style={{ 
-                              position: "absolute", 
-                              left: 0, 
-                              color: activeSlice.color,
-                              fontWeight: 700 
-                            }}>•</span>
+                          <div key={idx} style={{ fontSize: 13, color: "#2c3e50", paddingLeft: "12px", position: "relative" }}>
+                            <span style={{ position: "absolute", left: 0, color: activeSlice.color, fontWeight: 700 }}>•</span>
                             {achievement}
                           </div>
                         ))}
@@ -718,6 +681,31 @@ export default function HumanLibraryPie() {
           </>
         )}
       </AnimatePresence>
+
+      <h5 style={{
+        position: "absolute",
+        bottom: "10px",
+        right: "30px",
+        margin: 0,
+        fontSize: "14px",
+        fontWeight: 600,
+        color: "#666",
+        zIndex: 50
+      }}>Li Jingda, Diploma in Information Technology, Year 2</h5>
+
+      <img 
+            src="img/qr.png" 
+            alt="Jingda's Linkedin QR"
+            style={{
+              position: "absolute",
+              bottom: "30px",
+              right: "30px",
+              width: "120px",
+              height: "auto",
+              zIndex: 100
+            }}
+          />
+      
     </div>
   );
 }
